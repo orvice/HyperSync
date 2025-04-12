@@ -89,13 +89,14 @@ func (c *MastodonClient) ListPosts(ctx context.Context, limit int) ([]*Post, err
 			Content:    status.Content,
 			Visibility: status.Visibility,
 		}
-
 		// Add media attachments if available
 		if len(status.MediaAttachments) > 0 {
 			// We don't have the original media data, just note that media exists
 			post.Media = []Media{}
+			for _, media := range status.MediaAttachments {
+				post.Media = append(post.Media, *NewMediaFromURL(media.URL))
+			}
 		}
-
 		posts = append(posts, post)
 	}
 

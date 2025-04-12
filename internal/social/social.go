@@ -21,8 +21,9 @@ type Post struct {
 }
 
 type Media struct {
-	data []byte
-	url  string
+	data        []byte
+	url         string
+	Description string
 }
 
 // NewMedia creates a new Media object from byte data
