@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/bluesky-social/indigo/api/atproto"
@@ -69,34 +70,87 @@ func NewBlueskyClientFromEnv() (*BlueskyClient, error) {
 }
 
 // Post 发布一条Bluesky帖子
-func (b *BlueskyClient) Post(ctx context.Context, text string) (string, error) {
+func (b *BlueskyClient) Post(ctx context.Context, post *Post) (interface{}, error) {
 	// 使用HTTP客户端直接发出请求
 	url := fmt.Sprintf("%s/xrpc/com.atproto.repo.createRecord", b.Client.Host)
 
 	// 生成一个唯一的rkey，使用当前时间戳
 	rkey := fmt.Sprintf("%d", time.Now().UnixNano())
 
+	// 创建基本的记录结构
+	record := map[string]interface{}{
+		"$type":     "app.bsky.feed.post",
+		"text":      post.Content,
+		"createdAt": time.Now().UTC().Format(time.RFC3339),
+	}
+
+	// 处理媒体附件
+	if len(post.Media) > 0 {
+		// 创建空的 embed 图像容器
+		facets := []interface{}{}
+
+		// 上传每个媒体文件并添加到 embed
+		for _, media := range post.Media {
+			// 获取媒体数据，可能需要从 URL 获取
+			mediaData, err := media.GetData()
+			if err != nil {
+				return nil, fmt.Errorf("failed to get media data: %w", err)
+			}
+
+			// 上传图像到 Bluesky
+			resp, err := atproto.RepoUploadBlob(ctx, b.Client, bytes.NewReader(mediaData))
+			if err != nil {
+				return nil, fmt.Errorf("failed to upload media: %w", err)
+			}
+
+			// 如果没有 embed 结构，创建一个
+			if _, ok := record["embed"]; !ok {
+				// 创建图像集合
+				record["embed"] = map[string]interface{}{
+					"$type":  "app.bsky.embed.images",
+					"images": []interface{}{},
+				}
+			}
+
+			// 添加图像到集合
+			images := record["embed"].(map[string]interface{})["images"].([]interface{})
+			images = append(images, map[string]interface{}{
+				"alt": "",
+				"image": map[string]interface{}{
+					"$type": "blob",
+					"ref": map[string]interface{}{
+						"$link": resp.Blob.Ref,
+					},
+					"mimeType": http.DetectContentType(mediaData),
+					"size":     len(mediaData),
+				},
+			})
+			record["embed"].(map[string]interface{})["images"] = images
+		}
+
+		// 如果有 facets，添加到记录
+		if len(facets) > 0 {
+			record["facets"] = facets
+		}
+	}
+
 	// 创建请求体
 	reqBody := map[string]interface{}{
 		"repo":       b.Client.Auth.Did,
 		"collection": "app.bsky.feed.post",
 		"rkey":       rkey,
-		"record": map[string]interface{}{
-			"$type":     "app.bsky.feed.post",
-			"text":      text,
-			"createdAt": time.Now().UTC().Format(time.RFC3339),
-		},
+		"record":     record,
 	}
 
 	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal request body: %w", err)
+		return nil, fmt.Errorf("failed to marshal request body: %w", err)
 	}
 
 	// 创建请求
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	// 添加请求头
@@ -107,7 +161,7 @@ func (b *BlueskyClient) Post(ctx context.Context, text string) (string, error) {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to send request: %w", err)
+		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -115,9 +169,9 @@ func (b *BlueskyClient) Post(ctx context.Context, text string) (string, error) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var errResp map[string]interface{}
 		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-			return "", fmt.Errorf("failed with status %d", resp.StatusCode)
+			return nil, fmt.Errorf("failed with status %d", resp.StatusCode)
 		}
-		return "", fmt.Errorf("failed with status %d: %v", resp.StatusCode, errResp)
+		return nil, fmt.Errorf("failed with status %d: %v", resp.StatusCode, errResp)
 	}
 
 	// 解析响应以获取URI
@@ -130,7 +184,7 @@ func (b *BlueskyClient) Post(ctx context.Context, text string) (string, error) {
 		return rkey, nil // 即使解析响应失败，我们也能返回自己生成的rkey
 	}
 
-	return rkey, nil
+	return respData, nil
 }
 
 // DeletePost 删除一条Bluesky帖子
@@ -193,4 +247,137 @@ func toJSONMap(v interface{}) (map[string]interface{}, error) {
 	}
 
 	return m, nil
+}
+
+// ListPosts 获取当前用户的最新帖子
+func (b *BlueskyClient) ListPosts(ctx context.Context, limit int) ([]*Post, error) {
+	// 设置默认限制
+	if limit <= 0 {
+		limit = 20
+	}
+
+	// 获取用户 DID
+	did := b.Client.Auth.Did
+	if did == "" {
+		return nil, fmt.Errorf("user DID not found in client auth")
+	}
+
+	// 获取用户的帖子
+	feed, err := b.getAuthorFeed(ctx, did, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get author feed: %w", err)
+	}
+
+	// 转换为 Post 类型
+	posts := make([]*Post, 0, len(feed.Feed))
+	for _, item := range feed.Feed {
+		// 检查 post 记录是否存在
+		if item.Post == nil || item.Post.Record == nil {
+			continue
+		}
+
+		// 提取记录 ID
+		parts := strings.Split(item.Post.URI, "/")
+		rkey := ""
+		if len(parts) > 0 {
+			rkey = parts[len(parts)-1]
+		}
+
+		// 创建 post 对象
+		post := &Post{
+			ID:         rkey,
+			Content:    item.Post.Record.Text,
+			Visibility: "public", // Bluesky 目前没有可见性设置，默认为公开
+		}
+
+		// 处理媒体附件
+		if item.Post.Embed != nil && item.Post.Embed.Images != nil && len(item.Post.Embed.Images) > 0 {
+			// 我们没有原始媒体数据，只是记录媒体存在
+			post.Media = []Media{}
+		}
+
+		posts = append(posts, post)
+	}
+
+	return posts, nil
+}
+
+// getAuthorFeed 获取作者的帖子流
+func (b *BlueskyClient) getAuthorFeed(ctx context.Context, did string, limit int) (*struct {
+	Feed []struct {
+		Post *struct {
+			URI    string `json:"uri"`
+			CID    string `json:"cid"`
+			Record *struct {
+				Text string `json:"text"`
+			} `json:"record"`
+			Embed *struct {
+				Images []interface{} `json:"images"`
+			} `json:"embed,omitempty"`
+		} `json:"post"`
+	} `json:"feed"`
+}, error) {
+	// 使用 HTTP 客户端直接发出请求
+	url := fmt.Sprintf("%s/xrpc/app.bsky.feed.getAuthorFeed", b.Client.Host)
+
+	// 创建请求参数
+	params := map[string]interface{}{
+		"actor": did,
+		"limit": limit,
+	}
+
+	// 构建查询字符串
+	var queryParts []string
+	for k, v := range params {
+		queryParts = append(queryParts, fmt.Sprintf("%s=%v", k, v))
+	}
+	fullURL := fmt.Sprintf("%s?%s", url, strings.Join(queryParts, "&"))
+
+	// 创建请求
+	req, err := http.NewRequestWithContext(ctx, "GET", fullURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// 添加请求头
+	req.Header.Set("Authorization", "Bearer "+b.Client.Auth.AccessJwt)
+
+	// 发送请求
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// 检查响应状态
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var errResp map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			return nil, fmt.Errorf("failed with status %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("failed with status %d: %v", resp.StatusCode, errResp)
+	}
+
+	// 解析响应
+	var feed struct {
+		Feed []struct {
+			Post *struct {
+				URI    string `json:"uri"`
+				CID    string `json:"cid"`
+				Record *struct {
+					Text string `json:"text"`
+				} `json:"record"`
+				Embed *struct {
+					Images []interface{} `json:"images"`
+				} `json:"embed,omitempty"`
+			} `json:"post"`
+		} `json:"feed"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&feed); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &feed, nil
 }

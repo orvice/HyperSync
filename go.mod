@@ -6,6 +6,7 @@ require (
 	butterfly.orx.me/core v0.0.0-20250326150726-e3b4a5d6dff9
 	github.com/bluesky-social/indigo v0.0.0-20250411024310-8500c47d717c
 	github.com/gin-gonic/gin v1.10.0
+	github.com/mattn/go-mastodon v0.0.9
 )
 
 require (
@@ -63,7 +64,6 @@ require (
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/mattn/go-mastodon v0.0.9 // indirect
 	github.com/minio/sha256-simd v1.0.1 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
