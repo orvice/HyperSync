@@ -11,10 +11,17 @@ type Config struct {
 func (c *Config) Print() {}
 
 type SocialConfig struct {
-	Type     string
-	Enabled  bool
+	// Social type
+	Type              string
+	Enabled           bool
+	SyncEnabled       bool     // Whether to sync content to this platform from others
+	SyncFromPlatforms []string // List of platform IDs to sync content from
+	SyncCategories    []string // Categories of content to sync (e.g., "posts", "images", "replies")
+
+	// Mastodon config
 	Mastodon *MastodonConfig
-	Bluesky  *BlueskyConfig
+	// Bluesky config
+	Bluesky *BlueskyConfig
 }
 
 type MastodonConfig struct {
