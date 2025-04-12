@@ -49,11 +49,21 @@ func TestPost(t *testing.T) {
 
 	// Test posting - only run this if specifically enabled with TEST_POST=1
 	if os.Getenv("TEST_POST") == "1" {
-		err = client.Post(context.Background(), "Test post from HyperSync unit test")
+		rkey, err := client.Post(context.Background(), "Test post from HyperSync unit test")
 		if err != nil {
 			t.Fatalf("Error posting to Bluesky: %v", err)
 		}
+
+		t.Logf("Successfully posted to Bluesky with record key: %s", rkey)
+
+		// Test deletion of the post we just created
+		err = client.DeletePost(context.Background(), rkey)
+		if err != nil {
+			t.Fatalf("Error deleting post from Bluesky: %v", err)
+		}
+
+		t.Logf("Successfully deleted post with record key: %s", rkey)
 	} else {
-		t.Log("Skipping actual post test. Set TEST_POST=1 to enable.")
+		t.Log("Skipping actual post/delete test. Set TEST_POST=1 to enable.")
 	}
 }

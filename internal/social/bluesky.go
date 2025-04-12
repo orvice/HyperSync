@@ -69,19 +69,80 @@ func NewBlueskyClientFromEnv() (*BlueskyClient, error) {
 }
 
 // Post 发布一条Bluesky帖子
-func (b *BlueskyClient) Post(ctx context.Context, text string) error {
+func (b *BlueskyClient) Post(ctx context.Context, text string) (string, error) {
 	// 使用HTTP客户端直接发出请求
 	url := fmt.Sprintf("%s/xrpc/com.atproto.repo.createRecord", b.Client.Host)
+
+	// 生成一个唯一的rkey，使用当前时间戳
+	rkey := fmt.Sprintf("%d", time.Now().UnixNano())
 
 	// 创建请求体
 	reqBody := map[string]interface{}{
 		"repo":       b.Client.Auth.Did,
 		"collection": "app.bsky.feed.post",
+		"rkey":       rkey,
 		"record": map[string]interface{}{
 			"$type":     "app.bsky.feed.post",
 			"text":      text,
 			"createdAt": time.Now().UTC().Format(time.RFC3339),
 		},
+	}
+
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	// 创建请求
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// 添加请求头
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+b.Client.Auth.AccessJwt)
+
+	// 发送请求
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// 检查响应状态
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var errResp map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			return "", fmt.Errorf("failed with status %d", resp.StatusCode)
+		}
+		return "", fmt.Errorf("failed with status %d: %v", resp.StatusCode, errResp)
+	}
+
+	// 解析响应以获取URI
+	var respData struct {
+		URI string `json:"uri"`
+		CID string `json:"cid"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&respData); err != nil {
+		return rkey, nil // 即使解析响应失败，我们也能返回自己生成的rkey
+	}
+
+	return rkey, nil
+}
+
+// DeletePost 删除一条Bluesky帖子
+func (b *BlueskyClient) DeletePost(ctx context.Context, rkey string) error {
+	// 使用HTTP客户端直接发出请求
+	url := fmt.Sprintf("%s/xrpc/com.atproto.repo.deleteRecord", b.Client.Host)
+
+	// 创建请求体
+	reqBody := map[string]interface{}{
+		"repo":       b.Client.Auth.Did,
+		"collection": "app.bsky.feed.post",
+		"rkey":       rkey,
 	}
 
 	jsonData, err := json.Marshal(reqBody)
