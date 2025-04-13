@@ -108,7 +108,7 @@ func ShouldSyncPost(sourcePlatform string, targetPlatformConfig map[string]inter
 type SocialPlatform struct {
 	Name   string
 	Client SocialClient
-	Config map[string]interface{}
+	Config *PlatformConfig
 }
 
 // CrossPost posts content to multiple social platforms based on configuration
@@ -127,7 +127,7 @@ func CrossPost(ctx context.Context, post *Post, platforms []*SocialPlatform) (ma
 		}
 
 		// Check if this post should be synced to this platform
-		if !ShouldSyncPost(sourcePlatform, platform.Config) {
+		if !platform.Config.ShouldSyncPost(sourcePlatform) {
 			continue
 		}
 
@@ -157,63 +157,52 @@ func CrossPost(ctx context.Context, post *Post, platforms []*SocialPlatform) (ma
 }
 
 // InitSocialPlatforms initializes social clients from configuration
-func InitSocialPlatforms(configs map[string]map[string]interface{}) ([]*SocialPlatform, error) {
+func InitSocialPlatforms(configs map[string]*PlatformConfig) ([]*SocialPlatform, error) {
 	var platforms []*SocialPlatform
 
 	for name, config := range configs {
-		// Check if this platform is enabled
-		enabled, ok := config["Enabled"].(bool)
-		if !ok || !enabled {
+		// Skip disabled platforms
+		if !config.Enabled {
 			continue
 		}
 
-		// Get platform type
-		platformType, ok := config["Type"].(string)
-		if !ok {
-			return nil, fmt.Errorf("missing platform type for %s", name)
+		// Set name if not already set
+		if config.Name == "" {
+			config.Name = name
 		}
 
 		var client SocialClient
 		var err error
 
 		// Initialize the appropriate client based on type
-		switch platformType {
+		switch config.Type {
 		case "mastodon":
-			mastodonConfig, ok := config["Mastodon"].(map[string]interface{})
-			if !ok {
+			if config.Mastodon == nil {
 				return nil, fmt.Errorf("missing Mastodon config for %s", name)
 			}
 
-			instance, _ := mastodonConfig["Instance"].(string)
-			token, _ := mastodonConfig["Token"].(string)
-
-			if instance == "" || token == "" {
+			if config.Mastodon.Instance == "" || config.Mastodon.Token == "" {
 				return nil, fmt.Errorf("missing Mastodon credentials for %s", name)
 			}
 
-			client = NewMastodonClient(instance, token)
+			client = NewMastodonClient(config.Mastodon.Instance, config.Mastodon.Token)
 
 		case "bluesky":
-			blueskyConfig, ok := config["Bluesky"].(map[string]interface{})
-			if !ok {
+			if config.Bluesky == nil {
 				return nil, fmt.Errorf("missing Bluesky config for %s", name)
 			}
 
-			host, _ := blueskyConfig["Host"].(string)
-			handle, _ := blueskyConfig["Handle"].(string)
-			password, _ := blueskyConfig["Password"].(string)
-
-			if host == "" || handle == "" || password == "" {
+			if config.Bluesky.Host == "" || config.Bluesky.Handle == "" || config.Bluesky.Password == "" {
 				return nil, fmt.Errorf("missing Bluesky credentials for %s", name)
 			}
 
-			client, err = NewBlueskyClient(host, handle, password)
+			client, err = NewBlueskyClient(config.Bluesky.Host, config.Bluesky.Handle, config.Bluesky.Password)
 			if err != nil {
 				return nil, fmt.Errorf("failed to initialize Bluesky client for %s: %w", name, err)
 			}
 
 		default:
-			return nil, fmt.Errorf("unsupported platform type %s for %s", platformType, name)
+			return nil, fmt.Errorf("unsupported platform type %s for %s", config.Type, name)
 		}
 
 		// Add the platform to the list

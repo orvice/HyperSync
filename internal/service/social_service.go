@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"go.orx.me/apps/hyper-sync/internal/conf"
 	"go.orx.me/apps/hyper-sync/internal/social"
 )
 
@@ -14,48 +13,9 @@ type SocialService struct {
 }
 
 // NewSocialService creates a new social service
-func NewSocialService(config map[string]*conf.SocialConfig) (*SocialService, error) {
-	// Convert the config structure to the format needed by social.InitSocialPlatforms
-	configMap := make(map[string]map[string]interface{})
-	for name, cfg := range config {
-		// Skip disabled platforms
-		if !cfg.Enabled {
-			continue
-		}
-
-		// Convert to map[string]interface{}
-		platformConfig := map[string]interface{}{
-			"Enabled":           cfg.Enabled,
-			"Type":              cfg.Type,
-			"SyncEnabled":       cfg.SyncEnabled,
-			"SyncFromPlatforms": cfg.SyncFromPlatforms,
-			"SyncCategories":    cfg.SyncCategories,
-		}
-
-		// Add platform-specific config
-		switch cfg.Type {
-		case "mastodon":
-			if cfg.Mastodon != nil {
-				platformConfig["Mastodon"] = map[string]interface{}{
-					"Instance": cfg.Mastodon.Instance,
-					"Token":    cfg.Mastodon.Token,
-				}
-			}
-		case "bluesky":
-			if cfg.Bluesky != nil {
-				platformConfig["Bluesky"] = map[string]interface{}{
-					"Host":     cfg.Bluesky.Host,
-					"Handle":   cfg.Bluesky.Handle,
-					"Password": cfg.Bluesky.Password,
-				}
-			}
-		}
-
-		configMap[name] = platformConfig
-	}
-
-	// Initialize platforms
-	platforms, err := social.InitSocialPlatforms(configMap)
+func NewSocialService(config map[string]*social.PlatformConfig) (*SocialService, error) {
+	// Initialize platforms with the configuration
+	platforms, err := social.InitSocialPlatforms(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize social platforms: %w", err)
 	}
@@ -78,6 +38,11 @@ func (s *SocialService) GetPlatform(name string) (*social.SocialPlatform, error)
 		return nil, fmt.Errorf("platform not found: %s", name)
 	}
 	return platform, nil
+}
+
+// GetAllPlatforms returns all configured platforms
+func (s *SocialService) GetAllPlatforms() map[string]*social.SocialPlatform {
+	return s.platforms
 }
 
 // PostToPlatform posts content to a specific platform

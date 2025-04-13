@@ -1,11 +1,13 @@
 package conf
 
+import "go.orx.me/apps/hyper-sync/internal/social"
+
 var (
 	Conf *Config
 )
 
 type Config struct {
-	Socials map[string]*SocialConfig
+	Socials map[string]*social.PlatformConfig
 }
 
 func (c *Config) Print() {}

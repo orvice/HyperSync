@@ -3,8 +3,10 @@ package service
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
+	"butterfly.orx.me/core/log"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.orx.me/apps/hyper-sync/internal/dao"
 	"go.orx.me/apps/hyper-sync/internal/social"
@@ -14,6 +16,8 @@ import (
 type PostService struct {
 	dao           *dao.MongoDAO
 	socialService *SocialService
+	jobRunning    bool
+	jobMutex      sync.Mutex
 }
 
 // NewPostService creates a new post service
@@ -21,6 +25,7 @@ func NewPostService(dao *dao.MongoDAO, socialService *SocialService) *PostServic
 	return &PostService{
 		dao:           dao,
 		socialService: socialService,
+		jobRunning:    false,
 	}
 }
 
@@ -110,6 +115,8 @@ func (s *PostService) DeletePost(ctx context.Context, id string) error {
 
 // crossPostToTargets cross-posts to specified target platforms
 func (s *PostService) crossPostToTargets(ctx context.Context, postID string, post *social.Post, platforms []string) {
+	logger := log.FromContext(ctx)
+
 	for _, platform := range platforms {
 		// Cross-post to the platform
 		resp, err := s.socialService.PostToPlatform(ctx, platform, post)
@@ -124,6 +131,7 @@ func (s *PostService) crossPostToTargets(ctx context.Context, postID string, pos
 		if err != nil {
 			status.Success = false
 			status.Error = err.Error()
+			logger.Error("Failed to cross-post", "platform", platform, "error", err)
 		} else {
 			status.Success = true
 			if resp != nil {
@@ -135,10 +143,13 @@ func (s *PostService) crossPostToTargets(ctx context.Context, postID string, pos
 					}
 				}
 			}
+			logger.Info("Cross-post succeeded", "platform", platform, "post_id", postID)
 		}
 
 		// Update status in database (ignore errors)
-		_ = s.dao.UpdateCrossPostStatus(ctx, postID, platform, status)
+		if err := s.dao.UpdateCrossPostStatus(ctx, postID, platform, status); err != nil {
+			logger.Error("Failed to update cross-post status", "platform", platform, "post_id", postID, "error", err)
+		}
 	}
 }
 
@@ -172,4 +183,134 @@ func (s *PostService) SyncPost(ctx context.Context, platformID, postID string, t
 	}
 
 	return nil
+}
+
+// StartSyncJob starts a background job that synchronizes posts from all platforms
+// according to the configuration
+func (s *PostService) StartSyncJob(ctx context.Context, interval time.Duration) error {
+	logger := log.FromContext(ctx)
+
+	s.jobMutex.Lock()
+	if s.jobRunning {
+		s.jobMutex.Unlock()
+		return fmt.Errorf("sync job is already running")
+	}
+	s.jobRunning = true
+	s.jobMutex.Unlock()
+
+	go func() {
+		jobCtx := context.Background()
+		jobLogger := log.FromContext(jobCtx)
+		jobLogger.Info("Starting post sync job")
+
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		defer func() {
+			s.jobMutex.Lock()
+			s.jobRunning = false
+			s.jobMutex.Unlock()
+			jobLogger.Info("Post sync job stopped")
+		}()
+
+		// Run immediately on start
+		s.runSyncJob(jobCtx)
+
+		for {
+			select {
+			case <-ticker.C:
+				s.runSyncJob(jobCtx)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	logger.Info("Post sync job started", "interval", interval)
+	return nil
+}
+
+// StopSyncJob stops the sync job
+func (s *PostService) StopSyncJob() {
+	s.jobMutex.Lock()
+	defer s.jobMutex.Unlock()
+	s.jobRunning = false
+}
+
+// runSyncJob runs one iteration of the sync job
+func (s *PostService) runSyncJob(ctx context.Context) {
+	logger := log.FromContext(ctx)
+	logger.Info("Running post sync job iteration")
+
+	// Get all configured platforms
+	platforms := s.socialService.GetAllPlatforms()
+
+	// For each source platform
+	for sourceName, sourcePlatform := range platforms {
+		// Skip if not enabled
+		if !sourcePlatform.Config.Enabled {
+			continue
+		}
+
+		// Get posts from this platform
+		logger.Info("Fetching posts", "platform", sourceName)
+		posts, err := s.socialService.ListPlatformPosts(ctx, sourceName, 20)
+		if err != nil {
+			logger.Error("Failed to fetch posts", "platform", sourceName, "error", err)
+			continue
+		}
+
+		// For each post
+		for _, post := range posts {
+			// Set source information
+			post.SourcePlatform = sourceName
+
+			// Check if we've already synced this post
+			existingPost, err := s.dao.GetPostByOriginalID(ctx, sourceName, post.ID)
+			if err != nil {
+				logger.Error("Failed to check for existing post",
+					"platform", sourceName,
+					"post_id", post.ID,
+					"error", err)
+				continue
+			}
+
+			if existingPost != nil {
+				// This post has already been synced
+				continue
+			}
+
+			// Get target platforms that should receive this post
+			var targetPlatforms []string
+			for targetName, targetPlatform := range platforms {
+				// Skip self
+				if targetName == sourceName {
+					continue
+				}
+
+				// Check if this target should receive posts from the source
+				if targetPlatform.Config.ShouldSyncPost(sourceName) {
+					targetPlatforms = append(targetPlatforms, targetName)
+				}
+			}
+
+			// If there are target platforms, sync the post
+			if len(targetPlatforms) > 0 {
+				logger.Info("Syncing post",
+					"post_id", post.ID,
+					"source", sourceName,
+					"targets", targetPlatforms)
+
+				post.OriginalID = post.ID // Store the original ID
+				_, err := s.CreatePost(ctx, post, targetPlatforms)
+				if err != nil {
+					logger.Error("Failed to sync post",
+						"post_id", post.ID,
+						"source", sourceName,
+						"error", err)
+				}
+			}
+		}
+	}
+
+	logger.Info("Post sync job iteration completed")
 }
