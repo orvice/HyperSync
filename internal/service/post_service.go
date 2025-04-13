@@ -261,6 +261,24 @@ func (s *PostService) runSyncJob(ctx context.Context) {
 
 		// For each post
 		for _, post := range posts {
+			// 判断帖子是否已经是同步过来的（即非本平台原生帖子），如果是则跳过
+			if post.SourcePlatform != "" && post.SourcePlatform != sourceName {
+				logger.Debug("Skipping already synced post",
+					"post_id", post.ID,
+					"original_platform", post.SourcePlatform,
+					"current_platform", sourceName)
+				continue
+			}
+
+			// 如果帖子有 OriginalID 但平台是当前平台，说明它可能是从其他平台同步过来并作了标记
+			if post.OriginalID != "" && post.OriginalID != post.ID {
+				logger.Debug("Skipping post with external original ID",
+					"post_id", post.ID,
+					"original_id", post.OriginalID,
+					"platform", sourceName)
+				continue
+			}
+
 			// Set source information
 			post.SourcePlatform = sourceName
 
