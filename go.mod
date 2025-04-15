@@ -4,11 +4,15 @@ go 1.24.1
 
 require (
 	butterfly.orx.me/core v0.0.0-20250326150726-e3b4a5d6dff9
+	connectrpc.com/connect v1.18.1
 	github.com/bluesky-social/indigo v0.0.0-20250411024310-8500c47d717c
 	github.com/gin-gonic/gin v1.10.0
 	github.com/mattn/go-mastodon v0.0.9
 	github.com/stretchr/testify v1.10.0
+	github.com/twitchtv/twirp v8.1.3+incompatible
 	go.mongodb.org/mongo-driver/v2 v2.0.0
+	google.golang.org/grpc v1.71.0
+	google.golang.org/protobuf v1.36.5
 )
 
 require (
@@ -123,8 +127,6 @@ require (
 	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250218202821-56aae31c358a // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250218202821-56aae31c358a // indirect
-	google.golang.org/grpc v1.71.0 // indirect
-	google.golang.org/protobuf v1.36.5 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	lukechampine.com/blake3 v1.2.1 // indirect
 )
