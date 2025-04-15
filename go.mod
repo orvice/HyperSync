@@ -7,6 +7,7 @@ require (
 	connectrpc.com/connect v1.18.1
 	github.com/bluesky-social/indigo v0.0.0-20250411024310-8500c47d717c
 	github.com/gin-gonic/gin v1.10.0
+	github.com/google/wire v0.6.0
 	github.com/mattn/go-mastodon v0.0.9
 	github.com/stretchr/testify v1.10.0
 	github.com/twitchtv/twirp v8.1.3+incompatible
