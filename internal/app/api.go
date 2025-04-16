@@ -1,13 +1,15 @@
 package app
 
-import "go.orx.me/apps/hyper-sync/internal/dao"
+import (
+	"go.orx.me/apps/hyper-sync/internal/service"
+)
 
 type ApiServer struct {
-	dao *dao.MongoDAO
+	svc *service.HyperSyncService
 }
 
-func NewApiServer(dao *dao.MongoDAO) (*ApiServer, error) {
+func NewApiServer(service *service.HyperSyncService) (*ApiServer, error) {
 	return &ApiServer{
-		dao: dao,
+		svc: service,
 	}, nil
 }
