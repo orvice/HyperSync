@@ -58,7 +58,7 @@ type AuthServiceClient interface {
 	// 使用 Google 账号登录
 	LoginWithGoogle(context.Context, *connect.Request[v1.LoginWithGoogleRequest]) (*connect.Response[v1.LoginWithGoogleResponse], error)
 	// 获取当前用户信息 (需要认证)
-	GetMe(context.Context, *connect.Request[v1.GetMeRequest]) (*connect.Response[v1.User], error)
+	GetMe(context.Context, *connect.Request[v1.GetMeRequest]) (*connect.Response[v1.GetMeResponse], error)
 }
 
 // NewAuthServiceClient constructs a client for the api.v1.AuthService service. By default, it uses
@@ -96,7 +96,7 @@ func NewAuthServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 			connect.WithSchema(authServiceMethods.ByName("LoginWithGoogle")),
 			connect.WithClientOptions(opts...),
 		),
-		getMe: connect.NewClient[v1.GetMeRequest, v1.User](
+		getMe: connect.NewClient[v1.GetMeRequest, v1.GetMeResponse](
 			httpClient,
 			baseURL+AuthServiceGetMeProcedure,
 			connect.WithSchema(authServiceMethods.ByName("GetMe")),
@@ -111,7 +111,7 @@ type authServiceClient struct {
 	login           *connect.Client[v1.LoginRequest, v1.LoginResponse]
 	updateProfile   *connect.Client[v1.UpdateProfileRequest, v1.UpdateProfileResponse]
 	loginWithGoogle *connect.Client[v1.LoginWithGoogleRequest, v1.LoginWithGoogleResponse]
-	getMe           *connect.Client[v1.GetMeRequest, v1.User]
+	getMe           *connect.Client[v1.GetMeRequest, v1.GetMeResponse]
 }
 
 // Register calls api.v1.AuthService.Register.
@@ -135,7 +135,7 @@ func (c *authServiceClient) LoginWithGoogle(ctx context.Context, req *connect.Re
 }
 
 // GetMe calls api.v1.AuthService.GetMe.
-func (c *authServiceClient) GetMe(ctx context.Context, req *connect.Request[v1.GetMeRequest]) (*connect.Response[v1.User], error) {
+func (c *authServiceClient) GetMe(ctx context.Context, req *connect.Request[v1.GetMeRequest]) (*connect.Response[v1.GetMeResponse], error) {
 	return c.getMe.CallUnary(ctx, req)
 }
 
@@ -150,7 +150,7 @@ type AuthServiceHandler interface {
 	// 使用 Google 账号登录
 	LoginWithGoogle(context.Context, *connect.Request[v1.LoginWithGoogleRequest]) (*connect.Response[v1.LoginWithGoogleResponse], error)
 	// 获取当前用户信息 (需要认证)
-	GetMe(context.Context, *connect.Request[v1.GetMeRequest]) (*connect.Response[v1.User], error)
+	GetMe(context.Context, *connect.Request[v1.GetMeRequest]) (*connect.Response[v1.GetMeResponse], error)
 }
 
 // NewAuthServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -227,6 +227,6 @@ func (UnimplementedAuthServiceHandler) LoginWithGoogle(context.Context, *connect
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("api.v1.AuthService.LoginWithGoogle is not implemented"))
 }
 
-func (UnimplementedAuthServiceHandler) GetMe(context.Context, *connect.Request[v1.GetMeRequest]) (*connect.Response[v1.User], error) {
+func (UnimplementedAuthServiceHandler) GetMe(context.Context, *connect.Request[v1.GetMeRequest]) (*connect.Response[v1.GetMeResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("api.v1.AuthService.GetMe is not implemented"))
 }

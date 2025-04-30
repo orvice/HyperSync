@@ -1405,3 +1405,132 @@ var _ interface {
 	Cause() error
 	ErrorName() string
 } = GetMeRequestValidationError{}
+
+// Validate checks the field values on GetMeResponse with the rules defined in
+// the proto definition for this message. If any rules are violated, the first
+// error encountered is returned, or nil if there are no violations.
+func (m *GetMeResponse) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on GetMeResponse with the rules defined
+// in the proto definition for this message. If any rules are violated, the
+// result is a list of violation errors wrapped in GetMeResponseMultiError, or
+// nil if none found.
+func (m *GetMeResponse) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *GetMeResponse) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	if all {
+		switch v := interface{}(m.GetUser()).(type) {
+		case interface{ ValidateAll() error }:
+			if err := v.ValidateAll(); err != nil {
+				errors = append(errors, GetMeResponseValidationError{
+					field:  "User",
+					reason: "embedded message failed validation",
+					cause:  err,
+				})
+			}
+		case interface{ Validate() error }:
+			if err := v.Validate(); err != nil {
+				errors = append(errors, GetMeResponseValidationError{
+					field:  "User",
+					reason: "embedded message failed validation",
+					cause:  err,
+				})
+			}
+		}
+	} else if v, ok := interface{}(m.GetUser()).(interface{ Validate() error }); ok {
+		if err := v.Validate(); err != nil {
+			return GetMeResponseValidationError{
+				field:  "User",
+				reason: "embedded message failed validation",
+				cause:  err,
+			}
+		}
+	}
+
+	if len(errors) > 0 {
+		return GetMeResponseMultiError(errors)
+	}
+
+	return nil
+}
+
+// GetMeResponseMultiError is an error wrapping multiple validation errors
+// returned by GetMeResponse.ValidateAll() if the designated constraints
+// aren't met.
+type GetMeResponseMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m GetMeResponseMultiError) Error() string {
+	msgs := make([]string, 0, len(m))
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m GetMeResponseMultiError) AllErrors() []error { return m }
+
+// GetMeResponseValidationError is the validation error returned by
+// GetMeResponse.Validate if the designated constraints aren't met.
+type GetMeResponseValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e GetMeResponseValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e GetMeResponseValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e GetMeResponseValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e GetMeResponseValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e GetMeResponseValidationError) ErrorName() string { return "GetMeResponseValidationError" }
+
+// Error satisfies the builtin error interface
+func (e GetMeResponseValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sGetMeResponse.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = GetMeResponseValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = GetMeResponseValidationError{}
