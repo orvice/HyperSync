@@ -9,7 +9,7 @@ import (
 // setupServices initializes all services
 func setupServices(db *mongo.Client) {
 	// Create DAO
-	mongoDAO := dao.NewMongoDAO(db, "hyper_sync")
+	mongoDAO := dao.NewMongoDAO(db)
 
 	// Initialize services with the DAO
 	InitServices(mongoDAO)

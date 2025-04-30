@@ -5,11 +5,16 @@ import (
 )
 
 type ApiServer struct {
-	svc *service.HyperSyncService
+	svc     *service.HyperSyncService
+	authSvc *service.AuthService // Add AuthService field
 }
 
-func NewApiServer(service *service.HyperSyncService) (*ApiServer, error) {
+func NewApiServer(
+	svc *service.HyperSyncService,
+	authSvc *service.AuthService, // Add AuthService parameter
+) (*ApiServer, error) {
 	return &ApiServer{
-		svc: service,
+		svc:     svc,
+		authSvc: authSvc, // Assign AuthService
 	}, nil
 }
