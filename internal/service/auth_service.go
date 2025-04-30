@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt" // Add fmt for error formatting
 	"log" // Add log for temporary logging
-	"os"  // Add os for env vars (temporary)
+
+	// "os" // Remove os import
 
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.orx.me/apps/hyper-sync/internal/conf" // Add conf import
 	"go.orx.me/apps/hyper-sync/internal/dao"
 	pb "go.orx.me/apps/hyper-sync/pkg/proto/api/v1"
 	"golang.org/x/crypto/bcrypt"
@@ -27,11 +30,10 @@ type contextKey string
 
 const userIDKey contextKey = "userID"
 
-// TODO: Move JWT secret and expiration to configuration
 const (
-	jwtSecretKey        = "your-very-secret-key" // CHANGE THIS IN PRODUCTION!
-	jwtExpiration       = time.Hour * 24         // Token valid for 24 hours
-	refreshTokenNotImpl = ""                     // Placeholder for refresh token
+	// jwtSecretKey        = "your-very-secret-key" // REMOVED - Moved to config
+	// jwtExpiration       = time.Hour * 24         // REMOVED - Moved to config
+	refreshTokenNotImpl = "" // Placeholder for refresh token
 )
 
 // AuthService implements the AuthServiceServer interface defined in proto/api/v1/auth.proto
@@ -39,33 +41,52 @@ type AuthService struct {
 	pb.UnimplementedAuthServiceServer
 	userDao           dao.UserDAO
 	googleOAuthConfig *oauth2.Config // Add Google OAuth config
-	// TODO: Replace direct config with a proper config dependency
+	conf              *conf.Config   // Add config dependency
+	redisCli          *redis.Client
 }
 
 // NewAuthService creates a new instance of AuthService.
-// TODO: Inject configuration properly instead of using env vars directly
-func NewAuthService(userDao dao.UserDAO) *AuthService {
-	// Temporary: Read Google credentials from environment variables
-	// In production, use a proper configuration management system (e.g., Viper, envconfig)
-	googleClientID := os.Getenv("GOOGLE_CLIENT_ID")
-	googleClientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
-	googleRedirectURL := os.Getenv("GOOGLE_REDIRECT_URL") // URL registered in Google Cloud Console
-
-	if googleClientID == "" || googleClientSecret == "" || googleRedirectURL == "" {
-		log.Println("Warning: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, or GOOGLE_REDIRECT_URL environment variables not set. Google Login will likely fail.")
+func NewAuthService(userDao dao.UserDAO, redisCli *redis.Client, cfg *conf.Config) *AuthService {
+	var oauthCfg *oauth2.Config
+	// Setup Google OAuth config only if configured
+	if cfg.Auth != nil && cfg.Auth.Google != nil && cfg.Auth.Google.ClientID != "" && cfg.Auth.Google.ClientSecret != "" && cfg.Auth.Google.RedirectURL != "" {
+		oauthCfg = &oauth2.Config{
+			ClientID:     cfg.Auth.Google.ClientID,
+			ClientSecret: cfg.Auth.Google.ClientSecret,
+			RedirectURL:  cfg.Auth.Google.RedirectURL,
+			Scopes:       []string{"openid", "email", "profile"}, // Standard scopes for login
+			Endpoint:     google.Endpoint,
+		}
+	} else {
+		log.Println("Warning: Google OAuth configuration is incomplete or missing in config. Google Login will not be available.")
 	}
 
-	oauthCfg := &oauth2.Config{
-		ClientID:     googleClientID,
-		ClientSecret: googleClientSecret,
-		RedirectURL:  googleRedirectURL,                      // Must match one registered in Google Cloud Console
-		Scopes:       []string{"openid", "email", "profile"}, // Standard scopes for login
-		Endpoint:     google.Endpoint,
+	// Ensure JWT config exists, provide defaults if necessary (though ideally config loading handles this)
+	if cfg.Auth == nil {
+		cfg.Auth = &conf.AuthConfig{}
+	}
+	if cfg.Auth.JWT == nil {
+		log.Println("Warning: JWT configuration missing, using default expiration (24h) and potentially insecure key.")
+		cfg.Auth.JWT = &conf.JWTConfig{
+			SecretKey:  "default-insecure-secret-key", // Provide a default, but log warning
+			Expiration: time.Hour * 24,
+		}
+	} else {
+		if cfg.Auth.JWT.SecretKey == "" {
+			log.Println("Warning: JWT SecretKey is empty in config, using default insecure key.")
+			cfg.Auth.JWT.SecretKey = "default-insecure-secret-key" // Ensure secret is not empty
+		}
+		if cfg.Auth.JWT.Expiration <= 0 {
+			log.Println("Warning: JWT Expiration is invalid in config, using default (24h).")
+			cfg.Auth.JWT.Expiration = time.Hour * 24 // Default expiration if invalid
+		}
 	}
 
 	return &AuthService{
 		userDao:           userDao,
+		redisCli:          redisCli,
 		googleOAuthConfig: oauthCfg,
+		conf:              cfg, // Store the config
 	}
 }
 
@@ -143,33 +164,14 @@ func (s *AuthService) Login(ctx context.Context, req *pb.LoginRequest) (*pb.Logi
 		return nil, status.Errorf(codes.Internal, "failed to verify password")
 	}
 
-	// 4. Generate access token.
-	expirationTime := time.Now().Add(jwtExpiration)
-	claims := &jwt.RegisteredClaims{
-		Subject:   user.ID.Hex(), // Use user's unique ID as subject
-		ExpiresAt: jwt.NewNumericDate(expirationTime),
-		IssuedAt:  jwt.NewNumericDate(time.Now()),
-		Issuer:    "hyper-sync", // Optional: identify the issuer
-		// Add custom claims if needed
-		// "username": user.Username,
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	accessToken, err := token.SignedString([]byte(jwtSecretKey))
+	// 4. Generate access token using config.
+	tokenInfo, err := s.generateToken(user)
 	if err != nil {
-		// Log internal error
-		return nil, status.Errorf(codes.Internal, "failed to generate access token")
+		// generateToken already logs and returns a gRPC status error
+		return nil, err
 	}
-
-	// TODO: Implement refresh token generation and storage if needed.
 
 	// 5. Return token info and user information.
-	tokenInfo := &pb.TokenInfo{
-		AccessToken:  accessToken,
-		RefreshToken: refreshTokenNotImpl, // Not implemented yet
-		ExpiresIn:    int64(jwtExpiration.Seconds()),
-	}
-
 	return &pb.LoginResponse{
 		TokenInfo: tokenInfo,
 		User:      mapDaoUserToProto(user),
@@ -247,7 +249,18 @@ func (s *AuthService) UpdateProfile(ctx context.Context, req *pb.UpdateProfileRe
 
 // Helper function to generate JWT token (extracted from Login)
 func (s *AuthService) generateToken(user *dao.User) (*pb.TokenInfo, error) {
-	expirationTime := time.Now().Add(jwtExpiration)
+	// Use JWT settings from config
+	jwtConfig := s.conf.Auth.JWT
+	if jwtConfig == nil || jwtConfig.SecretKey == "" || jwtConfig.Expiration <= 0 {
+		log.Printf("Error: Invalid JWT configuration for generating token.")
+		// Fallback to defaults if config is somehow invalid (should be caught in NewAuthService)
+		jwtConfig = &conf.JWTConfig{
+			SecretKey:  "fallback-insecure-secret",
+			Expiration: time.Hour * 24,
+		}
+	}
+
+	expirationTime := time.Now().Add(jwtConfig.Expiration)
 	claims := &jwt.RegisteredClaims{
 		Subject:   user.ID.Hex(), // Use user's unique ID as subject
 		ExpiresAt: jwt.NewNumericDate(expirationTime),
@@ -256,7 +269,7 @@ func (s *AuthService) generateToken(user *dao.User) (*pb.TokenInfo, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	accessToken, err := token.SignedString([]byte(jwtSecretKey))
+	accessToken, err := token.SignedString([]byte(jwtConfig.SecretKey))
 	if err != nil {
 		// Log internal error
 		log.Printf("Error signing token for user %s: %v", user.ID.Hex(), err)
@@ -267,8 +280,19 @@ func (s *AuthService) generateToken(user *dao.User) (*pb.TokenInfo, error) {
 	tokenInfo := &pb.TokenInfo{
 		AccessToken:  accessToken,
 		RefreshToken: refreshTokenNotImpl, // Not implemented yet
-		ExpiresIn:    int64(jwtExpiration.Seconds()),
+		ExpiresIn:    int64(jwtConfig.Expiration.Seconds()),
 	}
+
+	// Store token in Redis with expiration time
+	redisKey := fmt.Sprintf("auth:token:%s", user.ID.Hex())
+	err = s.redisCli.Set(context.Background(), redisKey, accessToken, jwtConfig.Expiration).Err()
+	if err != nil {
+		log.Printf("Error storing token in Redis for user %s: %v", user.ID.Hex(), err)
+		// Decide if failure to store in Redis should prevent login.
+		// For now, we log the error but still return the token.
+		// return nil, status.Errorf(codes.Internal, "failed to store token")
+	}
+
 	return tokenInfo, nil
 }
 
@@ -463,4 +487,70 @@ func mapDaoUserToProto(user *dao.User) *pb.User {
 		CreatedAt: timestamppb.New(user.CreatedAt),
 		UpdatedAt: timestamppb.New(user.UpdatedAt),
 	}
+}
+
+// GetUserByToken retrieves a user based on a provided JWT access token.
+// Note: This is primarily for internal use or specific scenarios.
+// Standard authentication should rely on middleware validating the token from headers.
+func (s *AuthService) GetUserByToken(ctx context.Context, tokenString string) (*dao.User, error) {
+	// 1. Validate JWT configuration
+	jwtConfig := s.conf.Auth.JWT
+	if jwtConfig == nil || jwtConfig.SecretKey == "" {
+		log.Printf("Error: Invalid JWT configuration for token validation.")
+		return nil, status.Errorf(codes.Internal, "JWT validation is not configured properly")
+	}
+
+	// 2. Parse and validate the token
+	claims := &jwt.RegisteredClaims{}
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+		// Ensure the signing method is HMAC
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(jwtConfig.SecretKey), nil
+	})
+
+	if err != nil {
+		log.Printf("Error parsing token: %v", err)
+		if errors.Is(err, jwt.ErrTokenExpired) {
+			return nil, status.Errorf(codes.Unauthenticated, "token has expired")
+		}
+		if errors.Is(err, jwt.ErrTokenMalformed) {
+			return nil, status.Errorf(codes.Unauthenticated, "token is malformed")
+		}
+		// Other parsing errors
+		return nil, status.Errorf(codes.Unauthenticated, "invalid token: %v", err)
+	}
+
+	if !token.Valid {
+		log.Printf("Token is invalid (but parsing didn't error?)")
+		return nil, status.Errorf(codes.Unauthenticated, "invalid token")
+	}
+
+	// 3. Extract user ID from claims
+	userIDHex := claims.Subject
+	if userIDHex == "" {
+		log.Printf("Error: Token claims missing subject (userID)")
+		return nil, status.Errorf(codes.Unauthenticated, "invalid token claims: missing user identifier")
+	}
+
+	userID, err := primitive.ObjectIDFromHex(userIDHex)
+	if err != nil {
+		log.Printf("Error converting userID hex '%s' to ObjectID: %v", userIDHex, err)
+		return nil, status.Errorf(codes.Internal, "invalid user identifier format in token")
+	}
+
+	// 4. Fetch user from database
+	user, err := s.userDao.GetUserByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, dao.ErrUserNotFound) {
+			log.Printf("User %s from token not found in DB", userIDHex)
+			return nil, status.Errorf(codes.NotFound, "user associated with token not found")
+		}
+		log.Printf("Error fetching user %s by ID: %v", userIDHex, err)
+		return nil, status.Errorf(codes.Internal, "failed to retrieve user information")
+	}
+
+	// 5. Return user
+	return user, nil
 }

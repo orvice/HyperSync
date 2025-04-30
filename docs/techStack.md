@@ -8,6 +8,12 @@ You are an expert in Go, microservices architecture, and clean backend developme
 
 - 存储使用 mongo,注释使用 v2 的 driver
 - cache 使用 redis
+- protobuf 定义的 service 在 `api/app` 目录下编写实现,请注意进行必要的 service 分层
+
+
+### Wire 
+
+- 项目使用 wire 进行依赖管理,修改 wire.go 之后,请执行 `make wire` 重新生成
 
 
 ### General Responsibilities:
@@ -30,6 +36,7 @@ You are an expert in Go, microservices architecture, and clean backend developme
   - internal/api/: gRPC/REST transport definitions and handlers
   - internal/conf: configuration schemas and loading
   - internal/http: routers
+  - internal/service: service
   - test/: test utilities, mocks, and integration tests
 - Group code by feature when it improves clarity and cohesion.
 - Keep logic decoupled from framework-specific code.
