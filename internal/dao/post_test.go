@@ -24,7 +24,8 @@ func setupTestDB(t *testing.T) (*MongoDAO, func()) {
 
 	// Create a unique database name for this test run
 	dbName := "hyper_sync_test_" + time.Now().Format("20060102150405")
-	dao := NewMongoDAO(client, dbName)
+	dao := NewMongoDAO(client)
+	dao.Database = dbName
 
 	// Return cleanup function
 	cleanup := func() {

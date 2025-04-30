@@ -1,13 +1,22 @@
 package conf
 
-import "go.orx.me/apps/hyper-sync/internal/social"
+import (
+	"time"
+
+	"go.orx.me/apps/hyper-sync/internal/social"
+)
 
 var (
 	Conf *Config
 )
 
+func Get() *Config {
+	return Conf
+}
+
 type Config struct {
 	Socials map[string]*social.PlatformConfig
+	Auth    *AuthConfig // Add Auth config section
 }
 
 func (c *Config) Print() {}
@@ -35,4 +44,23 @@ type BlueskyConfig struct {
 	Host     string
 	Handle   string
 	Password string
+}
+
+// AuthConfig holds authentication related configurations
+type AuthConfig struct {
+	Google *GoogleConfig
+	JWT    *JWTConfig
+}
+
+// GoogleConfig holds Google OAuth credentials
+type GoogleConfig struct {
+	ClientID     string
+	ClientSecret string
+	RedirectURL  string
+}
+
+// JWTConfig holds JWT secret and expiration settings
+type JWTConfig struct {
+	SecretKey  string
+	Expiration time.Duration
 }

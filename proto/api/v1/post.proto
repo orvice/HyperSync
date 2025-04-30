@@ -1,0 +1,135 @@
+syntax = "proto3";
+package api.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "go.orx.me/apps/hyper-sync/pkg/proto/api/v1";
+
+// Post represents a social media post with enhanced features
+message Post {
+  string id = 1;
+  string user_id = 2;
+  string content = 3;
+  string visibility = 4;
+  string source_platform = 5;
+  string original_id = 6;
+  repeated string media_ids = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+  map<string, CrossPostStatus> cross_post_status = 10;
+  PostStatus status = 11;
+  google.protobuf.Timestamp scheduled_at = 12;
+  bool is_draft = 13;
+}
+
+// PostStatus represents the current status of a post
+enum PostStatus {
+  POST_STATUS_UNSPECIFIED = 0;
+  POST_STATUS_DRAFT = 1;
+  POST_STATUS_SCHEDULED = 2;
+  POST_STATUS_PUBLISHED = 3;
+  POST_STATUS_FAILED = 4;
+}
+
+// CrossPostStatus tracks the status of a cross-post to a platform
+message CrossPostStatus {
+  bool success = 1;
+  string error = 2;
+  string platform_id = 3;
+  bool cross_posted = 4;
+  google.protobuf.Timestamp posted_at = 5;
+}
+
+// CreatePostRequest represents the request to create a post
+message CreatePostRequest {
+  string user_id = 1;
+  string content = 2;
+  string visibility = 3;
+  repeated string media_ids = 4;
+  google.protobuf.Timestamp scheduled_at = 5;
+  bool is_draft = 6;
+}
+
+// CreatePostResponse represents the response containing the created post
+message CreatePostResponse {
+  Post post = 1;
+}
+
+// UpdatePostRequest represents the request to update a post
+message UpdatePostRequest {
+  string id = 1;
+  string content = 2;
+  string visibility = 3;
+  repeated string media_ids = 4;
+  google.protobuf.Timestamp scheduled_at = 5;
+  bool is_draft = 6;
+}
+
+// UpdatePostResponse represents the response containing the updated post
+message UpdatePostResponse {
+  Post post = 1;
+}
+
+// GetPostRequest represents the request to get a post
+message GetPostRequest {
+  string id = 1;
+}
+
+// GetPostResponse represents the response containing a single post
+message GetPostResponse {
+  Post post = 1;
+}
+
+// ListPostsRequest represents the request to list posts
+message ListPostsRequest {
+  string user_id = 1;
+  PostStatus status = 2;
+  int64 limit = 3;
+  int64 offset = 4;
+}
+
+// ListPostsResponse represents the response containing a list of posts
+message ListPostsResponse {
+  repeated Post posts = 1;
+  int64 total = 2;
+}
+
+// DeletePostRequest represents the request to delete a post
+message DeletePostRequest {
+  string id = 1;
+}
+
+// DeletePostResponse represents the response to a delete post request
+message DeletePostResponse {
+  bool success = 1;
+}
+
+// PublishPostRequest represents the request to publish a post
+message PublishPostRequest {
+  string id = 1;
+}
+
+// PublishPostResponse represents the response to a publish post request
+message PublishPostResponse {
+  Post post = 1;
+}
+
+service PostService {
+  // CreatePost creates a new post
+  rpc CreatePost(CreatePostRequest) returns (CreatePostResponse) {}
+
+  // UpdatePost updates an existing post
+  rpc UpdatePost(UpdatePostRequest) returns (UpdatePostResponse) {}
+
+  // GetPost retrieves a single post by ID
+  rpc GetPost(GetPostRequest) returns (GetPostResponse) {}
+
+  // ListPosts retrieves a list of posts with optional filtering
+  rpc ListPosts(ListPostsRequest) returns (ListPostsResponse) {}
+
+  // DeletePost deletes a post by ID
+  rpc DeletePost(DeletePostRequest) returns (DeletePostResponse) {}
+
+  // PublishPost publishes a draft or scheduled post
+  rpc PublishPost(PublishPostRequest) returns (PublishPostResponse) {}
+}

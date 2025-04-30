@@ -2,7 +2,7 @@ all: buf build
 ent:
 	ent generate ./pkg/ent/schema
 buf:
-	rm -rf pkg/proto
+	# rm -rf pkg/proto
 	cd proto/ && buf generate
 	cd proto/ && buf format -w
 	cd proto/ && buf lint
