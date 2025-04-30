@@ -22,15 +22,15 @@ var (
 
 // User represents a user document in the database.
 type User struct {
-	ID           bson.ObjectID `bson:"_id,omitempty"`
-	Username     string        `bson:"username"`
-	Email        string        `bson:"email"`
-	PasswordHash string        `bson:"password_hash"` // Store hashed password
-	Nickname     string        `bson:"nickname,omitempty"`
-	AvatarURL    string        `bson:"avatar_url,omitempty"`
-	GoogleID     string        `bson:"google_id,omitempty"` // For Google Login
-	CreatedAt    time.Time     `bson:"created_at"`
-	UpdatedAt    time.Time     `bson:"updated_at"`
+	ID           primitive.ObjectID `bson:"_id,omitempty"`
+	Username     string             `bson:"username"`
+	Email        string             `bson:"email"`
+	PasswordHash string             `bson:"password_hash"` // Store hashed password
+	Nickname     string             `bson:"nickname,omitempty"`
+	AvatarURL    string             `bson:"avatar_url,omitempty"`
+	GoogleID     string             `bson:"google_id,omitempty"` // For Google Login
+	CreatedAt    time.Time          `bson:"created_at"`
+	UpdatedAt    time.Time          `bson:"updated_at"`
 }
 
 // UserDAO defines the interface for user data operations.
@@ -66,14 +66,9 @@ func NewUserDAO(mongoDAO *MongoDAO) UserDAO {
 	return &mongoUserDAO{MongoDAO: mongoDAO}
 }
 
-// collection returns the MongoDB collection for users.
-func (dao *MongoDAO) collection(name string) *mongo.Collection {
-	return dao.Client.Database(dao.Database).Collection(name)
-}
-
 // CreateUser inserts a new user into the database.
 func (dao *mongoUserDAO) CreateUser(ctx context.Context, user *User) error {
-	user.ID = bson.NewObjectID()
+	user.ID = primitive.NewObjectID()
 	now := time.Now()
 	user.CreatedAt = now
 	user.UpdatedAt = now
@@ -170,4 +165,16 @@ func (dao *mongoUserDAO) UpdateUser(ctx context.Context, user *User) error {
 		return ErrUserNotFound
 	}
 	return nil
+}
+
+// NewUser creates a new User instance with the given username and email.
+func NewUser(username, email string) *User {
+	now := time.Now()
+	return &User{
+		ID:        primitive.NewObjectID(),
+		Username:  username,
+		Email:     email,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
 }

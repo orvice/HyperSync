@@ -10,6 +10,10 @@ var (
 	Conf *Config
 )
 
+func Get() *Config {
+	return Conf
+}
+
 type Config struct {
 	Socials map[string]*social.PlatformConfig
 	Auth    *AuthConfig // Add Auth config section
