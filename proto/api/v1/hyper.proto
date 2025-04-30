@@ -1,0 +1,91 @@
+syntax = "proto3";
+package api.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "go.orx.me/apps/hyper-sync/pkg/proto/api/v1";
+
+// Post represents a social media post
+message Post {
+  string id = 1;
+  string user_id = 2;
+  string content = 3;
+  string visibility = 4;
+  string source_platform = 5;
+  string original_id = 6;
+  repeated string media_ids = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+  map<string, CrossPostStatus> cross_post_status = 10;
+}
+
+// CrossPostStatus tracks the status of a cross-post to a platform
+message CrossPostStatus {
+  bool success = 1;
+  string error = 2;
+  string platform_id = 3;
+  bool cross_posted = 4;
+  google.protobuf.Timestamp posted_at = 5;
+}
+
+// ListPostsRequest represents the request to list posts
+message ListPostsRequest {
+  int64 limit = 1;
+  int64 skip = 2;
+  string source_platform = 3;
+  string visibility = 4;
+}
+
+// ListPostsResponse represents the response containing a list of posts
+message ListPostsResponse {
+  repeated Post posts = 1;
+}
+
+// GetPostRequest represents the request to get a post
+message GetPostRequest {
+  string id = 1;
+}
+
+// GetPostResponse represents the response containing a single post
+message GetPostResponse {
+  Post post = 1;
+}
+
+// CreatePostRequest represents the request to create a post
+message CreatePostRequest {
+  string user_id = 1;
+  string content = 2;
+  string visibility = 3;
+  string source_platform = 4;
+  string original_id = 5;
+  repeated string media_ids = 6;
+}
+
+// CreatePostResponse represents the response containing the created post ID
+message CreatePostResponse {
+  string id = 1;
+}
+
+// DeletePostRequest represents the request to delete a post
+message DeletePostRequest {
+  string id = 1;
+}
+
+// DeletePostResponse represents the response to a delete post request
+message DeletePostResponse {
+  bool success = 1;
+}
+
+service HyperSyncService {
+  // ListPosts retrieves a list of posts with optional filtering
+  rpc ListPosts(ListPostsRequest) returns (ListPostsResponse) {}
+
+  // GetPost retrieves a single post by ID
+  rpc GetPost(GetPostRequest) returns (GetPostResponse) {}
+
+  // CreatePost creates a new post
+  rpc CreatePost(CreatePostRequest) returns (CreatePostResponse) {}
+
+  // DeletePost deletes a post by ID
+  rpc DeletePost(DeletePostRequest) returns (DeletePostResponse) {}
+}
