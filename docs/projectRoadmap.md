@@ -6,30 +6,38 @@ HyperSync is a multi-user microblogging platform that allows users to publish po
 ## Core Features
 
 ### User Management
-- User registration and authentication
-- Profile management
-- User role system (admin, regular users)
+- [x] User registration and authentication
+- [ ] Profile management
+- [x] User role system (admin, regular users)
 
 ### Content Creation
-- Microblog post creation with rich text support
-- Media attachment (images, videos)
-- Post scheduling
-- Drafts management
+- [x] Microblog post creation with rich text support
+- [x] Media attachment (images, videos)
+- [ ] Post scheduling
+- [ ] Drafts management
 
 ### Social Media Integration
-- Connect to multiple social platforms (Mastodon,bluesky)
-- Platform-specific formatting
-- Selective sync configuration per post
-- Sync status tracking and reporting
+- [x] Connect to multiple social platforms (Mastodon, bluesky)
+- [x] Platform-specific formatting
+- [x] Selective sync configuration per post
+- [x] Sync status tracking and reporting
 
 ### Configuration
-- Global sync settings (default platforms)
-- Per-user sync preferences
-- API key management for social platforms
-- Character limit handling for different platforms
+- [x] Global sync settings (default platforms)
+- [x] Per-user sync preferences
+- [x] API key management for social platforms
+- [x] Character limit handling for different platforms
 
 ### Analytics
-- Post reach and engagement metrics
-- Cross-platform performance comparison
-- User growth analytics
-- Content performance insights
+- [ ] Post reach and engagement metrics
+- [ ] Cross-platform performance comparison
+- [ ] User growth analytics
+- [ ] Content performance insights
+
+## Completed Tasks
+1. User authentication system with Google OAuth
+2. Basic post management (create, read, update, delete)
+3. Social platform integration (Mastodon, Bluesky)
+4. Cross-posting functionality
+5. Platform-specific formatting
+6. Sync status tracking

@@ -7,32 +7,14 @@
 package wire
 
 import (
-	"go.orx.me/apps/hyper-sync/internal/app"
 	"go.orx.me/apps/hyper-sync/internal/conf"
 	"go.orx.me/apps/hyper-sync/internal/dao"
 	"go.orx.me/apps/hyper-sync/internal/server"
 	"go.orx.me/apps/hyper-sync/internal/service"
+	"go.orx.me/apps/hyper-sync/internal/social"
 )
 
 // Injectors from wire.go:
-
-func NewApiServer() (*app.ApiServer, error) {
-	client, err := dao.NewMongoClient()
-	if err != nil {
-		return nil, err
-	}
-	mongoDAO := dao.NewMongoDAO(client)
-	hyperSyncService := service.NewHyperSyncService(mongoDAO)
-	userDAO := dao.NewUserDAO(mongoDAO)
-	redisClient := dao.NewRedisClient()
-	config := conf.Get()
-	authService := service.NewAuthService(userDAO, redisClient, config)
-	apiServer, err := app.NewApiServer(hyperSyncService, authService)
-	if err != nil {
-		return nil, err
-	}
-	return apiServer, nil
-}
 
 func NewAuthServer() (*server.AuthServer, error) {
 	client, err := dao.NewMongoClient()
@@ -46,4 +28,27 @@ func NewAuthServer() (*server.AuthServer, error) {
 	authService := service.NewAuthService(userDAO, redisClient, config)
 	authServer := server.NewAuthServer(authService)
 	return authServer, nil
+}
+
+func NewPostServer() (*server.PostServer, error) {
+	client, err := dao.NewMongoClient()
+	if err != nil {
+		return nil, err
+	}
+	mongoDAO := dao.NewMongoDAO(client)
+	v := ProvideConfig()
+	socialService, err := service.NewSocialService(v)
+	if err != nil {
+		return nil, err
+	}
+	postService := service.NewPostService(mongoDAO, socialService)
+	postServer := server.NewPostServer(postService)
+	return postServer, nil
+}
+
+// wire.go:
+
+// ProvideConfig provides the platform configuration from the global config
+func ProvideConfig() map[string]*social.PlatformConfig {
+	return conf.Get().Socials
 }

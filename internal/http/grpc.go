@@ -14,4 +14,11 @@ func RegisterGRPCServer(s *grpc.Server) {
 		panic(err)
 	}
 	v1.RegisterAuthServiceServer(s, authServer)
+
+	// Register post service
+	postServer, err := wire.NewPostServer()
+	if err != nil {
+		panic(err)
+	}
+	v1.RegisterHyperSyncServiceServer(s, postServer)
 }

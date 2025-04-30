@@ -5,30 +5,16 @@ package wire
 
 import (
 	"github.com/google/wire"
-	"go.orx.me/apps/hyper-sync/internal/app"
 	"go.orx.me/apps/hyper-sync/internal/conf"
 	"go.orx.me/apps/hyper-sync/internal/dao"
 	"go.orx.me/apps/hyper-sync/internal/server"
-	"go.orx.me/apps/hyper-sync/internal/service" // Add service package import
+	"go.orx.me/apps/hyper-sync/internal/service"
+	"go.orx.me/apps/hyper-sync/internal/social"
 )
 
-func NewApiServer() (*app.ApiServer, error) {
-	wire.Build(
-		// DAO Layer
-		dao.NewMongoClient, // Provides *mongo.Client
-		dao.NewMongoDAO,    // Provides *MongoDAO, needs *mongo.Client
-		dao.NewUserDAO,     // Provides UserDAO, needs *MongoDAO
-		dao.NewRedisClient,
-		conf.Get,
-
-		// Service Layer
-		service.NewAuthService,      // Needs UserDAO
-		service.NewHyperSyncService, // Needs ??? (Add dependencies if any)
-
-		// App Layer
-		app.NewApiServer, // Needs *AuthService, *HyperSyncService, etc.
-	)
-	return &app.ApiServer{}, nil
+// ProvideConfig provides the platform configuration from the global config
+func ProvideConfig() map[string]*social.PlatformConfig {
+	return conf.Get().Socials
 }
 
 func NewAuthServer() (*server.AuthServer, error) {
@@ -43,4 +29,17 @@ func NewAuthServer() (*server.AuthServer, error) {
 		conf.Get,
 	)
 	return &server.AuthServer{}, nil
+}
+
+func NewPostServer() (*server.PostServer, error) {
+	wire.Build(
+		dao.NewMongoClient,
+		dao.NewMongoDAO,
+
+		ProvideConfig,
+		service.NewSocialService,
+		service.NewPostService,
+		server.NewPostServer,
+	)
+	return &server.PostServer{}, nil
 }
