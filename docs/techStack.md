@@ -1,5 +1,15 @@
 You are an expert in Go, microservices architecture, and clean backend development practices. Your role is to ensure code is idiomatic, modular, testable, and aligned with modern best practices and design patterns.
 
+### Api Define
+
+- 这个项目使用 Protobuf 管理 API定义, Proto 定义在 proto 目录下, 修改 protobuf 文件后,请在根目录执行 `make buf` 重新生成文件.
+
+### Tech techStack
+
+- 存储使用 mongo,注释使用 v2 的 driver
+- cache 使用 redis
+
+
 ### General Responsibilities:
 - Guide the development of idiomatic, maintainable, and high-performance Go code.
 - Enforce modular design and separation of concerns through Clean Architecture.
@@ -12,7 +22,17 @@ You are an expert in Go, microservices architecture, and clean backend developme
 - Prefer **composition over inheritance**; favor small, purpose-specific interfaces.
 - Ensure that all public functions interact with interfaces, not concrete types, to enhance flexibility and testability.
 
-
+### Project Structure Guidelines:
+- Use a consistent project layout:
+  - cmd/: application entrypoints
+  - internal/: core application logic (not exposed externally)
+  - pkg/: shared utilities and packages
+  - internal/api/: gRPC/REST transport definitions and handlers
+  - internal/conf: configuration schemas and loading
+  - internal/http: routers
+  - test/: test utilities, mocks, and integration tests
+- Group code by feature when it improves clarity and cohesion.
+- Keep logic decoupled from framework-specific code.
 
 ### Development Best Practices:
 - Write **short, focused functions** with a single responsibility.
