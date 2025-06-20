@@ -1,9 +1,13 @@
 package http
 
 import (
+	"strconv"
+	"time"
+
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.orx.me/apps/hyper-sync/internal/dao"
+	"go.orx.me/apps/hyper-sync/internal/social"
 )
 
 // setupServices initializes all services
@@ -34,6 +38,7 @@ func Router(r *gin.Engine) {
 	// API routes
 	api := r.Group("/api")
 	{
+		// Posts routes
 		posts := api.Group("/posts")
 		{
 			posts.GET("", listPosts)
@@ -41,6 +46,31 @@ func Router(r *gin.Engine) {
 			posts.POST("", createPost)
 			posts.DELETE("/:id", deletePost)
 		}
+
+		// Sync routes
+		sync := api.Group("/sync")
+		{
+			sync.POST("/trigger", triggerSync)
+			sync.GET("/status", getSyncStatus)
+			sync.GET("/history", getSyncHistory)
+			sync.POST("/retry", retryFailedSyncs)
+		}
+
+		// Config routes
+		config := api.Group("/config")
+		{
+			config.GET("", getConfig)
+			config.PUT("", updateConfig)
+		}
+
+		// Health check
+		api.GET("/health", func(c *gin.Context) {
+			c.JSON(200, gin.H{
+				"status":  "ok",
+				"service": "hyper-sync",
+				"time":    time.Now().UTC(),
+			})
+		})
 	}
 }
 
@@ -53,19 +83,130 @@ func getMongoDB() *mongo.Client {
 	return nil
 }
 
-// Placeholder handler functions
+// Post handler functions
 func listPosts(c *gin.Context) {
-	// Implementation
+	postService := GetPostService()
+	if postService == nil {
+		c.JSON(500, gin.H{"error": "Post service not initialized"})
+		return
+	}
+
+	// Parse query parameters
+	platform := c.Query("platform")
+	limitStr := c.DefaultQuery("limit", "20")
+	pageStr := c.DefaultQuery("page", "1")
+
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit < 1 || limit > 100 {
+		limit = 20
+	}
+
+	page, err := strconv.Atoi(pageStr)
+	if err != nil || page < 1 {
+		page = 1
+	}
+
+	// Get posts
+	posts, err := postService.ListPosts(c.Request.Context(), platform, limit, page)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to list posts: " + err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"posts": posts,
+		"page":  page,
+		"limit": limit,
+		"count": len(posts),
+	})
 }
 
 func getPost(c *gin.Context) {
-	// Implementation
+	postService := GetPostService()
+	if postService == nil {
+		c.JSON(500, gin.H{"error": "Post service not initialized"})
+		return
+	}
+
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(400, gin.H{"error": "Post ID is required"})
+		return
+	}
+
+	post, err := postService.GetPost(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to get post: " + err.Error()})
+		return
+	}
+
+	if post == nil {
+		c.JSON(404, gin.H{"error": "Post not found"})
+		return
+	}
+
+	c.JSON(200, post)
 }
 
 func createPost(c *gin.Context) {
-	// Implementation
+	postService := GetPostService()
+	if postService == nil {
+		c.JSON(500, gin.H{"error": "Post service not initialized"})
+		return
+	}
+
+	var post struct {
+		Content        string   `json:"content" binding:"required"`
+		Visibility     string   `json:"visibility"`
+		SourcePlatform string   `json:"source_platform"`
+		OriginalID     string   `json:"original_id"`
+		Platforms      []string `json:"platforms"`
+	}
+
+	if err := c.ShouldBindJSON(&post); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid request body: " + err.Error()})
+		return
+	}
+
+	// Create post object
+	newPost := &social.Post{
+		Content:        post.Content,
+		Visibility:     post.Visibility,
+		SourcePlatform: post.SourcePlatform,
+		OriginalID:     post.OriginalID,
+	}
+
+	// Create post
+	id, err := postService.CreatePost(c.Request.Context(), newPost, post.Platforms)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to create post: " + err.Error()})
+		return
+	}
+
+	c.JSON(201, gin.H{
+		"id":      id,
+		"message": "Post created successfully",
+	})
 }
 
 func deletePost(c *gin.Context) {
-	// Implementation
+	postService := GetPostService()
+	if postService == nil {
+		c.JSON(500, gin.H{"error": "Post service not initialized"})
+		return
+	}
+
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(400, gin.H{"error": "Post ID is required"})
+		return
+	}
+
+	err := postService.DeletePost(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to delete post: " + err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{"message": "Post deleted successfully"})
 }

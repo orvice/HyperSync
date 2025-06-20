@@ -2,6 +2,7 @@ package http
 
 import (
 	"sync"
+	"time"
 
 	"go.orx.me/apps/hyper-sync/internal/conf"
 	"go.orx.me/apps/hyper-sync/internal/dao"
@@ -11,6 +12,7 @@ import (
 var (
 	postService     *service.PostService
 	socialService   *service.SocialService
+	syncService     *service.SyncService
 	mongoDAO        *dao.MongoDAO
 	serviceInitOnce sync.Once
 	serviceInitDone bool
@@ -31,6 +33,27 @@ func InitServices(dao *dao.MongoDAO) {
 		// Initialize post service
 		postService = service.NewPostService(dao, socialService)
 
+		// Initialize sync service with default configuration
+		syncConfig := &service.SyncConfig{
+			MaxRetries:      3,
+			SyncInterval:    15 * time.Minute,
+			BatchSize:       20,
+			MaxMemosPerRun:  100,
+			TargetPlatforms: []string{"mastodon", "bluesky"}, // Default platforms
+			MemosConfig: &service.MemosConfig{
+				Endpoint: "", // Will be set from config
+				Token:    "", // Will be set from config
+			},
+			SkipPrivate: true,
+			SkipOlder:   7 * 24 * time.Hour, // Skip memos older than 7 days
+		}
+
+		// TODO: Load config from conf.Conf or environment variables
+		sync, err := service.NewSyncService(dao, socialService, syncConfig)
+		if err == nil {
+			syncService = sync
+		}
+
 		serviceInitDone = true
 	})
 }
@@ -49,6 +72,14 @@ func GetSocialService() *service.SocialService {
 		return nil
 	}
 	return socialService
+}
+
+// GetSyncService returns the sync service instance
+func GetSyncService() *service.SyncService {
+	if !serviceInitDone {
+		return nil
+	}
+	return syncService
 }
 
 // GetMongoDAO returns the MongoDB DAO instance

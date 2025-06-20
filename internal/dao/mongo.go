@@ -13,8 +13,9 @@ func NewMongoClient() (*mongo.Client, error) {
 	return nil, nil
 }
 
-func NewMongoDAO(client *mongo.Client) *MongoDAO {
+func NewMongoDAO(client *mongo.Client, database string) *MongoDAO {
 	return &MongoDAO{
-		Client: client,
+		Client:   client,
+		Database: database,
 	}
 }
