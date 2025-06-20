@@ -18,10 +18,12 @@ import (
 // ApiServer represents the API server with all components
 type ApiServer struct {
 	// Core services
-	mongoDAO      *dao.MongoDAO
-	socialService *service.SocialService
-	postService   *service.PostService
-	syncService   *service.SyncService
+	mongoDAO         *dao.MongoDAO
+	socialService    *service.SocialService
+	postService      *service.PostService
+	syncService      *service.SyncService
+	schedulerService *service.SchedulerService
+	webhookService   *service.WebhookService
 
 	// Configuration
 	config *AppConfig
@@ -38,6 +40,12 @@ type AppConfig struct {
 
 	// Sync configuration
 	SyncConfig *service.SyncConfig
+
+	// Scheduler configuration
+	SchedulerConfig *service.SchedulerConfig
+
+	// Webhook configuration
+	WebhookConfig *service.WebhookConfig
 
 	// Server configuration
 	HTTPPort string
@@ -89,6 +97,18 @@ func (s *ApiServer) Initialize(ctx context.Context, mongoClient *mongo.Client) e
 		}
 	}
 
+	// Initialize scheduler service if sync service is available
+	if s.syncService != nil && s.config.SchedulerConfig != nil {
+		s.schedulerService = service.NewSchedulerService(s.syncService, s.mongoDAO, s.config.SchedulerConfig)
+		logger.Info("Scheduler service initialized successfully")
+	}
+
+	// Initialize webhook service if scheduler service is available
+	if s.schedulerService != nil && s.config.WebhookConfig != nil {
+		s.webhookService = service.NewWebhookService(s.schedulerService, s.config.WebhookConfig)
+		logger.Info("Webhook service initialized successfully")
+	}
+
 	s.isInitialized = true
 	logger.Info("API server components initialized successfully")
 
@@ -115,6 +135,16 @@ func (s *ApiServer) GetSyncService() *service.SyncService {
 	return s.syncService
 }
 
+// GetSchedulerService returns the scheduler service instance
+func (s *ApiServer) GetSchedulerService() *service.SchedulerService {
+	return s.schedulerService
+}
+
+// GetWebhookService returns the webhook service instance
+func (s *ApiServer) GetWebhookService() *service.WebhookService {
+	return s.webhookService
+}
+
 // IsInitialized returns whether the server is initialized
 func (s *ApiServer) IsInitialized() bool {
 	return s.isInitialized
@@ -137,10 +167,36 @@ func (s *ApiServer) StartSyncJob(ctx context.Context) error {
 		"target_platforms", s.config.SyncConfig.TargetPlatforms,
 	)
 
-	// For now, we don't start the automatic job as it was in the original post service
-	// This would need to be implemented based on the requirements
+	// Start scheduler service if available and auto sync is enabled
+	if s.schedulerService != nil && s.config.SchedulerConfig != nil && s.config.SchedulerConfig.AutoSyncEnabled {
+		err := s.schedulerService.Start(ctx)
+		if err != nil {
+			logger.Error("Failed to start scheduler service", "error", err)
+			return fmt.Errorf("failed to start scheduler service: %w", err)
+		}
+		logger.Info("Scheduler service started successfully")
+	}
+
 	logger.Info("Background sync job setup completed")
 	return nil
+}
+
+// StartScheduler starts the scheduler service
+func (s *ApiServer) StartScheduler(ctx context.Context) error {
+	if s.schedulerService == nil {
+		return fmt.Errorf("scheduler service not initialized")
+	}
+
+	return s.schedulerService.Start(ctx)
+}
+
+// StopScheduler stops the scheduler service
+func (s *ApiServer) StopScheduler(ctx context.Context) error {
+	if s.schedulerService == nil {
+		return fmt.Errorf("scheduler service not initialized")
+	}
+
+	return s.schedulerService.Stop(ctx)
 }
 
 // TriggerManualSync triggers a manual sync operation
@@ -183,9 +239,18 @@ func (s *ApiServer) Shutdown(ctx context.Context) error {
 	logger := log.FromContext(ctx)
 	logger.Info("Shutting down API server")
 
-	// TODO: Stop any running background jobs
+	// Stop scheduler service if running
+	if s.schedulerService != nil {
+		err := s.schedulerService.Stop(ctx)
+		if err != nil {
+			logger.Error("Failed to stop scheduler service", "error", err)
+		} else {
+			logger.Info("Scheduler service stopped successfully")
+		}
+	}
+
 	// TODO: Close database connections if needed
-	// TODO: Clean up resources
+	// TODO: Clean up other resources
 
 	logger.Info("API server shutdown completed")
 	return nil
@@ -211,6 +276,14 @@ func loadConfig() (*AppConfig, error) {
 	} else {
 		config.SyncConfig = syncConfig
 	}
+
+	// Load scheduler configuration
+	schedulerConfig := loadSchedulerConfig()
+	config.SchedulerConfig = schedulerConfig
+
+	// Load webhook configuration
+	webhookConfig := loadWebhookConfig()
+	config.WebhookConfig = webhookConfig
 
 	return config, nil
 }
@@ -293,4 +366,63 @@ func getEnvSlice(key string, defaultValue []string) []string {
 		}
 	}
 	return defaultValue
+}
+
+// loadSchedulerConfig loads scheduler-specific configuration
+func loadSchedulerConfig() *service.SchedulerConfig {
+	// Parse default interval
+	intervalStr := getEnv("SCHEDULER_DEFAULT_INTERVAL", "15m")
+	interval, err := time.ParseDuration(intervalStr)
+	if err != nil {
+		interval = 15 * time.Minute
+	}
+
+	// Parse retry delay
+	retryDelayStr := getEnv("SCHEDULER_RETRY_DELAY", "5m")
+	retryDelay, err := time.ParseDuration(retryDelayStr)
+	if err != nil {
+		retryDelay = 5 * time.Minute
+	}
+
+	// Parse task timeout
+	taskTimeoutStr := getEnv("SCHEDULER_TASK_TIMEOUT", "10m")
+	taskTimeout, err := time.ParseDuration(taskTimeoutStr)
+	if err != nil {
+		taskTimeout = 10 * time.Minute
+	}
+
+	return &service.SchedulerConfig{
+		AutoSyncEnabled:    getEnvBool("SCHEDULER_AUTO_SYNC_ENABLED", false),
+		DefaultInterval:    interval,
+		MaxConcurrentTasks: getEnvInt("SCHEDULER_MAX_CONCURRENT_TASKS", 3),
+		MaxRetries:         getEnvInt("SCHEDULER_MAX_RETRIES", 3),
+		RetryDelay:         retryDelay,
+		QueueSize:          getEnvInt("SCHEDULER_QUEUE_SIZE", 100),
+		TaskTimeout:        taskTimeout,
+		SchedulePatterns:   []service.SchedulePattern{}, // Can be extended later
+	}
+}
+
+// loadWebhookConfig loads webhook-specific configuration
+func loadWebhookConfig() *service.WebhookConfig {
+	// Parse timeout
+	timeoutStr := getEnv("WEBHOOK_TIMEOUT", "30s")
+	timeout, err := time.ParseDuration(timeoutStr)
+	if err != nil {
+		timeout = 30 * time.Second
+	}
+
+	// Parse allowed sources
+	allowedSources := getEnvSlice("WEBHOOK_ALLOWED_SOURCES", []string{"memos", "github", "manual"})
+
+	// Parse trusted IPs
+	trustedIPs := getEnvSlice("WEBHOOK_TRUSTED_IPS", []string{})
+
+	return &service.WebhookConfig{
+		Enabled:        getEnvBool("WEBHOOK_ENABLED", false),
+		Secret:         getEnv("WEBHOOK_SECRET", ""),
+		AllowedSources: allowedSources,
+		TrustedIPs:     trustedIPs,
+		Timeout:        timeout,
+	}
 }

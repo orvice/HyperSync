@@ -10,12 +10,14 @@ import (
 )
 
 var (
-	postService     *service.PostService
-	socialService   *service.SocialService
-	syncService     *service.SyncService
-	mongoDAO        *dao.MongoDAO
-	serviceInitOnce sync.Once
-	serviceInitDone bool
+	postService      *service.PostService
+	socialService    *service.SocialService
+	syncService      *service.SyncService
+	schedulerService *service.SchedulerService
+	webhookService   *service.WebhookService
+	mongoDAO         *dao.MongoDAO
+	serviceInitOnce  sync.Once
+	serviceInitDone  bool
 )
 
 // InitServices initializes all services
@@ -54,6 +56,30 @@ func InitServices(dao *dao.MongoDAO) {
 			syncService = sync
 		}
 
+		// Initialize scheduler service
+		schedulerConfig := &service.SchedulerConfig{
+			AutoSyncEnabled:    false, // Disabled by default
+			DefaultInterval:    15 * time.Minute,
+			MaxConcurrentTasks: 3,
+			MaxRetries:         3,
+			RetryDelay:         5 * time.Minute,
+			QueueSize:          100,
+			TaskTimeout:        10 * time.Minute,
+		}
+		if syncService != nil {
+			schedulerService = service.NewSchedulerService(syncService, dao, schedulerConfig)
+		}
+
+		// Initialize webhook service
+		webhookConfig := &service.WebhookConfig{
+			Enabled:        false, // Disabled by default
+			AllowedSources: []string{"memos", "github", "manual"},
+			Timeout:        30 * time.Second,
+		}
+		if schedulerService != nil {
+			webhookService = service.NewWebhookService(schedulerService, webhookConfig)
+		}
+
 		serviceInitDone = true
 	})
 }
@@ -88,4 +114,20 @@ func GetMongoDAO() *dao.MongoDAO {
 		return nil
 	}
 	return mongoDAO
+}
+
+// GetSchedulerService returns the scheduler service instance
+func GetSchedulerService() *service.SchedulerService {
+	if !serviceInitDone {
+		return nil
+	}
+	return schedulerService
+}
+
+// GetWebhookService returns the webhook service instance
+func GetWebhookService() *service.WebhookService {
+	if !serviceInitDone {
+		return nil
+	}
+	return webhookService
 }

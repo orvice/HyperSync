@@ -56,6 +56,31 @@ func Router(r *gin.Engine) {
 			sync.POST("/retry", retryFailedSyncs)
 		}
 
+		// Scheduler routes
+		scheduler := api.Group("/scheduler")
+		{
+			scheduler.GET("/status", getSchedulerStatus)
+			scheduler.POST("/start", startScheduler)
+			scheduler.POST("/stop", stopScheduler)
+			scheduler.POST("/task", scheduleTask)
+			scheduler.GET("/queue", getTaskQueue)
+			scheduler.GET("/cron", getCronJobs)
+			scheduler.PUT("/config", updateSchedulerConfig)
+			scheduler.DELETE("/queue", clearTaskQueue)
+			scheduler.POST("/retry", retryFailedTasks)
+		}
+
+		// Webhook routes
+		webhook := api.Group("/webhook")
+		{
+			webhook.POST("/memos", handleMemosWebhook)
+			webhook.POST("/generic", handleGenericWebhook)
+			webhook.GET("/config", getWebhookConfig)
+			webhook.PUT("/config", updateWebhookConfig)
+			webhook.POST("/test", testWebhook)
+			webhook.GET("/stats", getWebhookStats)
+		}
+
 		// Config routes
 		config := api.Group("/config")
 		{
@@ -209,4 +234,171 @@ func deletePost(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{"message": "Post deleted successfully"})
+}
+
+// Scheduler handler functions
+func getSchedulerStatus(c *gin.Context) {
+	schedulerService := GetSchedulerService()
+	if schedulerService == nil {
+		c.JSON(500, gin.H{"error": "Scheduler service not initialized"})
+		return
+	}
+
+	schedulerHandlers := NewSchedulerHandlers(schedulerService)
+	schedulerHandlers.GetSchedulerStatus(c)
+}
+
+func startScheduler(c *gin.Context) {
+	schedulerService := GetSchedulerService()
+	if schedulerService == nil {
+		c.JSON(500, gin.H{"error": "Scheduler service not initialized"})
+		return
+	}
+
+	schedulerHandlers := NewSchedulerHandlers(schedulerService)
+	schedulerHandlers.StartScheduler(c)
+}
+
+func stopScheduler(c *gin.Context) {
+	schedulerService := GetSchedulerService()
+	if schedulerService == nil {
+		c.JSON(500, gin.H{"error": "Scheduler service not initialized"})
+		return
+	}
+
+	schedulerHandlers := NewSchedulerHandlers(schedulerService)
+	schedulerHandlers.StopScheduler(c)
+}
+
+func scheduleTask(c *gin.Context) {
+	schedulerService := GetSchedulerService()
+	if schedulerService == nil {
+		c.JSON(500, gin.H{"error": "Scheduler service not initialized"})
+		return
+	}
+
+	schedulerHandlers := NewSchedulerHandlers(schedulerService)
+	schedulerHandlers.ScheduleTask(c)
+}
+
+func getTaskQueue(c *gin.Context) {
+	schedulerService := GetSchedulerService()
+	if schedulerService == nil {
+		c.JSON(500, gin.H{"error": "Scheduler service not initialized"})
+		return
+	}
+
+	schedulerHandlers := NewSchedulerHandlers(schedulerService)
+	schedulerHandlers.GetTaskQueue(c)
+}
+
+func getCronJobs(c *gin.Context) {
+	schedulerService := GetSchedulerService()
+	if schedulerService == nil {
+		c.JSON(500, gin.H{"error": "Scheduler service not initialized"})
+		return
+	}
+
+	schedulerHandlers := NewSchedulerHandlers(schedulerService)
+	schedulerHandlers.GetCronJobs(c)
+}
+
+func updateSchedulerConfig(c *gin.Context) {
+	schedulerService := GetSchedulerService()
+	if schedulerService == nil {
+		c.JSON(500, gin.H{"error": "Scheduler service not initialized"})
+		return
+	}
+
+	schedulerHandlers := NewSchedulerHandlers(schedulerService)
+	schedulerHandlers.UpdateSchedulerConfig(c)
+}
+
+func clearTaskQueue(c *gin.Context) {
+	schedulerService := GetSchedulerService()
+	if schedulerService == nil {
+		c.JSON(500, gin.H{"error": "Scheduler service not initialized"})
+		return
+	}
+
+	schedulerHandlers := NewSchedulerHandlers(schedulerService)
+	schedulerHandlers.ClearTaskQueue(c)
+}
+
+func retryFailedTasks(c *gin.Context) {
+	schedulerService := GetSchedulerService()
+	if schedulerService == nil {
+		c.JSON(500, gin.H{"error": "Scheduler service not initialized"})
+		return
+	}
+
+	schedulerHandlers := NewSchedulerHandlers(schedulerService)
+	schedulerHandlers.RetryFailedTasks(c)
+}
+
+// Webhook handler functions
+func handleMemosWebhook(c *gin.Context) {
+	webhookService := GetWebhookService()
+	if webhookService == nil {
+		c.JSON(500, gin.H{"error": "Webhook service not initialized"})
+		return
+	}
+
+	webhookHandlers := NewWebhookHandlers(webhookService)
+	webhookHandlers.HandleMemosWebhook(c)
+}
+
+func handleGenericWebhook(c *gin.Context) {
+	webhookService := GetWebhookService()
+	if webhookService == nil {
+		c.JSON(500, gin.H{"error": "Webhook service not initialized"})
+		return
+	}
+
+	webhookHandlers := NewWebhookHandlers(webhookService)
+	webhookHandlers.HandleGenericWebhook(c)
+}
+
+func getWebhookConfig(c *gin.Context) {
+	webhookService := GetWebhookService()
+	if webhookService == nil {
+		c.JSON(500, gin.H{"error": "Webhook service not initialized"})
+		return
+	}
+
+	webhookHandlers := NewWebhookHandlers(webhookService)
+	webhookHandlers.GetWebhookConfig(c)
+}
+
+func updateWebhookConfig(c *gin.Context) {
+	webhookService := GetWebhookService()
+	if webhookService == nil {
+		c.JSON(500, gin.H{"error": "Webhook service not initialized"})
+		return
+	}
+
+	webhookHandlers := NewWebhookHandlers(webhookService)
+	webhookHandlers.UpdateWebhookConfig(c)
+}
+
+func testWebhook(c *gin.Context) {
+	webhookService := GetWebhookService()
+	if webhookService == nil {
+		c.JSON(500, gin.H{"error": "Webhook service not initialized"})
+		return
+	}
+
+	webhookHandlers := NewWebhookHandlers(webhookService)
+	webhookHandlers.TestWebhook(c)
+}
+
+func getWebhookStats(c *gin.Context) {
+	webhookService := GetWebhookService()
+	if webhookService == nil {
+		c.JSON(500, gin.H{"error": "Webhook service not initialized"})
+		return
+	}
+
+	webhookHandlers := NewWebhookHandlers(webhookService)
+	webhookHandlers.GetWebhookStats(c)
 }
