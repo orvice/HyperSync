@@ -24,6 +24,14 @@ type SocialConfig struct {
 	Mastodon *MastodonConfig
 	// Bluesky config
 	Bluesky *BlueskyConfig
+
+	// Memos config
+	Memos *MemosConfig
+}
+
+type MemosConfig struct {
+	Endpoint string
+	Token    string
 }
 
 type MastodonConfig struct {
