@@ -14,10 +14,7 @@ import (
 // Injectors from wire.go:
 
 func NewSyncService() (*service.SyncService, error) {
-	client, err := dao.NewMongoClient()
-	if err != nil {
-		return nil, err
-	}
+	client := dao.NewMongoClient()
 	postDao := dao.NewMongoDAO(client)
 	syncService, err := service.NewSyncService(postDao)
 	if err != nil {

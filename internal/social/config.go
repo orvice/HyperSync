@@ -11,6 +11,12 @@ type PlatformConfig struct {
 	SyncCategories    []string        // 要同步的内容类别
 	Mastodon          *MastodonConfig // Mastodon 特定配置
 	Bluesky           *BlueskyConfig  // Bluesky 特定配置
+	Memos             *MemosConfig    // Memos 特定配置
+}
+
+type MemosConfig struct {
+	Endpoint string
+	Token    string
 }
 
 // MastodonConfig 包含 Mastodon 平台的特定配置

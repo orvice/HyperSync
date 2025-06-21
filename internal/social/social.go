@@ -176,6 +176,15 @@ func InitSocialPlatforms(configs map[string]*PlatformConfig) ([]*SocialPlatform,
 
 		// Initialize the appropriate client based on type
 		switch config.Type {
+		case "memos":
+			if config.Memos == nil {
+				return nil, fmt.Errorf("missing Memos config for %s", name)
+			}
+			if config.Memos.Endpoint == "" || config.Memos.Token == "" {
+				return nil, fmt.Errorf("missing Memos credentials for %s", name)
+			}
+			client = NewMemos(config.Memos.Endpoint, config.Memos.Token)
+
 		case "mastodon":
 			if config.Mastodon == nil {
 				return nil, fmt.Errorf("missing Mastodon config for %s", name)

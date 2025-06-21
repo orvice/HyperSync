@@ -1,6 +1,7 @@
 package social
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -147,4 +148,37 @@ func (m *Memos) ListMemos(req *ListMemosRequest) (*ListMemosResponse, error) {
 	}
 
 	return &response, nil
+}
+
+// Post implements SocialClient interface - posts content to Memos
+func (m *Memos) Post(ctx context.Context, post *Post) (interface{}, error) {
+	// TODO: Implement Memos posting logic
+	return nil, fmt.Errorf("Memos Post method not implemented yet")
+}
+
+// ListPosts implements SocialClient interface - converts Memos to social Posts
+func (m *Memos) ListPosts(ctx context.Context, limit int) ([]*Post, error) {
+	req := &ListMemosRequest{
+		PageSize: limit,
+		OrderBy:  "display_time desc",
+	}
+
+	resp, err := m.ListMemos(req)
+	if err != nil {
+		return nil, err
+	}
+
+	var posts []*Post
+	for _, memo := range resp.Memos {
+		post := &Post{
+			ID:             memo.UID,
+			Content:        memo.Content,
+			Visibility:     strings.ToLower(memo.Visibility),
+			SourcePlatform: "memos",
+			OriginalID:     memo.UID,
+		}
+		posts = append(posts, post)
+	}
+
+	return posts, nil
 }

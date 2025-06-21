@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	Conf *Config
+	Conf = &Config{}
 )
 
 type Config struct {
