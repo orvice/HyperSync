@@ -176,6 +176,7 @@ func (m *Memos) ListPosts(ctx context.Context, limit int) ([]*Post, error) {
 			Visibility:     strings.ToLower(memo.Visibility),
 			SourcePlatform: "memos",
 			OriginalID:     memo.UID,
+			CreatedAt:      memo.CreateTime,
 		}
 		posts = append(posts, post)
 	}

@@ -20,6 +20,8 @@ type Post struct {
 	Media          []Media
 	SourcePlatform string
 	OriginalID     string
+
+	CreatedAt time.Time
 }
 
 type Media struct {

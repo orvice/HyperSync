@@ -17,6 +17,6 @@ func NewMongoClient() *mongo.Client {
 func NewMongoDAO(client *mongo.Client) PostDao {
 	return &MongoDAO{
 		Client:   client,
-		Database: "hypersync_posts",
+		Database: "hypersync",
 	}
 }

@@ -36,6 +36,7 @@ func NewSyncService(dao dao.PostDao) (*SyncService, error) {
 	return &SyncService{
 		mainSocail:    mainSocial,
 		socialService: SocialService,
+		postDao:       dao,
 	}, nil
 }
 
@@ -54,6 +55,21 @@ func (s *SyncService) Sync(ctx context.Context) error {
 
 	for _, post := range posts {
 		logger.Info("Syncing post", "post", post)
+
+		postModel, err := s.postDao.GetBySocialAndSocialID(ctx, s.mainSocail, post.ID)
+		if err != nil {
+			logger.Error("Error getting post",
+				"error", err)
+			continue
+		}
+
+		if postModel != nil {
+			logger.Info("Post already exists", "post", post)
+
+		} else {
+			logger.Info("Post not found", "post", post)
+		}
+
 	}
 
 	return nil
