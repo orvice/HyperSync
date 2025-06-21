@@ -7,21 +7,21 @@
 package wire
 
 import (
-	"go.orx.me/apps/hyper-sync/internal/app"
 	"go.orx.me/apps/hyper-sync/internal/dao"
+	"go.orx.me/apps/hyper-sync/internal/service"
 )
 
 // Injectors from wire.go:
 
-func NewApiServer() (*app.ApiServer, error) {
+func NewSyncService() (*service.SyncService, error) {
 	client, err := dao.NewMongoClient()
 	if err != nil {
 		return nil, err
 	}
-	mongoDAO := dao.NewMongoDAO(client)
-	apiServer, err := app.NewApiServer(mongoDAO)
+	postDao := dao.NewMongoDAO(client)
+	syncService, err := service.NewSyncService(postDao)
 	if err != nil {
 		return nil, err
 	}
-	return apiServer, nil
+	return syncService, nil
 }

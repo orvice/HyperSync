@@ -4,6 +4,7 @@ package social
 type PlatformConfig struct {
 	Name              string          // 平台名称
 	Type              string          // 平台类型 (mastodon, bluesky)
+	Main              bool            // 是否为主平台
 	Enabled           bool            // 是否启用
 	SyncEnabled       bool            // 是否启用同步功能
 	SyncFromPlatforms []string        // 允许从哪些平台同步内容

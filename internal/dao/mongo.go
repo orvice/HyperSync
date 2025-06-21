@@ -13,9 +13,9 @@ func NewMongoClient() (*mongo.Client, error) {
 	return nil, nil
 }
 
-func NewMongoDAO(client *mongo.Client, database string) *MongoDAO {
+func NewMongoDAO(client *mongo.Client) PostDao {
 	return &MongoDAO{
 		Client:   client,
-		Database: database,
+		Database: "hypersync_posts",
 	}
 }
