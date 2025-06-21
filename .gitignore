@@ -1,2 +1,4 @@
 bin/
 .cursor/
+local.yaml
+test.sh
