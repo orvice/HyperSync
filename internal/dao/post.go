@@ -23,6 +23,9 @@ type PostDao interface {
 	// GetPostByOriginalID retrieves a post by its original platform ID
 	GetPostByOriginalID(ctx context.Context, platform, originalID string) (*PostModel, error)
 
+	// GetBySocialAndSocialID retrieves a post by social platform and social ID
+	GetBySocialAndSocialID(ctx context.Context, social, socialID string) (*PostModel, error)
+
 	// ListPosts retrieves posts with optional filtering
 	ListPosts(ctx context.Context, filter map[string]interface{}, limit int64, skip int64) ([]*PostModel, error)
 
@@ -45,6 +48,8 @@ var _ PostDao = (*MongoDAO)(nil)
 // PostModel represents a post in the database
 type PostModel struct {
 	ID             bson.ObjectID `bson:"_id,omitempty"`
+	Social         string        `bson:"social"`
+	SocialID       string        `bson:"social_id"`
 	Content        string        `bson:"content"`
 	Visibility     string        `bson:"visibility"`
 	SourcePlatform string        `bson:"source_platform"`
@@ -127,6 +132,27 @@ func (d *MongoDAO) GetPostByOriginalID(ctx context.Context, platform, originalID
 	err := collection.FindOne(ctx, bson.M{
 		"source_platform": platform,
 		"original_id":     originalID,
+	}).Decode(post)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil // Not found
+		}
+		return nil, err
+	}
+
+	return post, nil
+}
+
+// GetBySocialAndSocialID retrieves a post by social platform and social ID
+func (d *MongoDAO) GetBySocialAndSocialID(ctx context.Context, social, socialID string) (*PostModel, error) {
+	// Get the posts collection
+	collection := d.Client.Database(d.Database).Collection(postsCollection)
+
+	// Find the post
+	post := &PostModel{}
+	err := collection.FindOne(ctx, bson.M{
+		"social":    social,
+		"social_id": socialID,
 	}).Decode(post)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
