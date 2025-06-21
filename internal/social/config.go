@@ -4,12 +4,19 @@ package social
 type PlatformConfig struct {
 	Name              string          // 平台名称
 	Type              string          // 平台类型 (mastodon, bluesky)
+	Main              bool            // 是否为主平台
 	Enabled           bool            // 是否启用
 	SyncEnabled       bool            // 是否启用同步功能
 	SyncFromPlatforms []string        // 允许从哪些平台同步内容
 	SyncCategories    []string        // 要同步的内容类别
 	Mastodon          *MastodonConfig // Mastodon 特定配置
 	Bluesky           *BlueskyConfig  // Bluesky 特定配置
+	Memos             *MemosConfig    // Memos 特定配置
+}
+
+type MemosConfig struct {
+	Endpoint string
+	Token    string
 }
 
 // MastodonConfig 包含 Mastodon 平台的特定配置

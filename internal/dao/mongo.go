@@ -1,6 +1,7 @@
 package dao
 
 import (
+	bmongo "butterfly.orx.me/core/store/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
@@ -9,12 +10,13 @@ type MongoDAO struct {
 	Database string
 }
 
-func NewMongoClient() (*mongo.Client, error) {
-	return nil, nil
+func NewMongoClient() *mongo.Client {
+	return bmongo.GetClient("main")
 }
 
-func NewMongoDAO(client *mongo.Client) *MongoDAO {
+func NewMongoDAO(client *mongo.Client) PostDao {
 	return &MongoDAO{
-		Client: client,
+		Client:   client,
+		Database: "hypersync",
 	}
 }

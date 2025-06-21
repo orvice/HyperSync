@@ -15,9 +15,41 @@ const (
 	postsCollection = "posts"
 )
 
+// PostDao defines the interface for post data access operations
+type PostDao interface {
+	// GetPostByID retrieves a post by its ID
+	GetPostByID(ctx context.Context, id string) (*PostModel, error)
+
+	// GetPostByOriginalID retrieves a post by its original platform ID
+	GetPostByOriginalID(ctx context.Context, platform, originalID string) (*PostModel, error)
+
+	// GetBySocialAndSocialID retrieves a post by social platform and social ID
+	GetBySocialAndSocialID(ctx context.Context, social, socialID string) (*PostModel, error)
+
+	// ListPosts retrieves posts with optional filtering
+	ListPosts(ctx context.Context, filter map[string]interface{}, limit int64, skip int64) ([]*PostModel, error)
+
+	// CreatePost creates a new post and returns its ID
+	CreatePost(ctx context.Context, post *PostModel) (string, error)
+
+	// UpdatePost updates an existing post
+	UpdatePost(ctx context.Context, post *PostModel) error
+
+	// DeletePost deletes a post by its ID
+	DeletePost(ctx context.Context, id string) error
+
+	// UpdateCrossPostStatus updates the cross-post status for a platform
+	UpdateCrossPostStatus(ctx context.Context, postID, platform string, status CrossPostStatus) error
+}
+
+// Ensure MongoDAO implements PostDao interface
+var _ PostDao = (*MongoDAO)(nil)
+
 // PostModel represents a post in the database
 type PostModel struct {
 	ID             bson.ObjectID `bson:"_id,omitempty"`
+	Social         string        `bson:"social"`
+	SocialID       string        `bson:"social_id"`
 	Content        string        `bson:"content"`
 	Visibility     string        `bson:"visibility"`
 	SourcePlatform string        `bson:"source_platform"`
@@ -111,8 +143,29 @@ func (d *MongoDAO) GetPostByOriginalID(ctx context.Context, platform, originalID
 	return post, nil
 }
 
+// GetBySocialAndSocialID retrieves a post by social platform and social ID
+func (d *MongoDAO) GetBySocialAndSocialID(ctx context.Context, social, socialID string) (*PostModel, error) {
+	// Get the posts collection
+	collection := d.Client.Database(d.Database).Collection(postsCollection)
+
+	// Find the post
+	post := &PostModel{}
+	err := collection.FindOne(ctx, bson.M{
+		"social":    social,
+		"social_id": socialID,
+	}).Decode(post)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil // Not found
+		}
+		return nil, err
+	}
+
+	return post, nil
+}
+
 // ListPosts retrieves posts with optional filtering
-func (d *MongoDAO) ListPosts(ctx context.Context, filter bson.M, limit int64, skip int64) ([]*PostModel, error) {
+func (d *MongoDAO) ListPosts(ctx context.Context, filter map[string]interface{}, limit int64, skip int64) ([]*PostModel, error) {
 	// Get the posts collection
 	collection := d.Client.Database(d.Database).Collection(postsCollection)
 
@@ -125,13 +178,16 @@ func (d *MongoDAO) ListPosts(ctx context.Context, filter bson.M, limit int64, sk
 		opts.SetSkip(skip)
 	}
 
-	// If no filter provided, use empty filter
+	// Convert generic filter to bson.M for MongoDB
+	var bsonFilter bson.M
 	if filter == nil {
-		filter = bson.M{}
+		bsonFilter = bson.M{}
+	} else {
+		bsonFilter = bson.M(filter)
 	}
 
 	// Find posts
-	cursor, err := collection.Find(ctx, filter, opts)
+	cursor, err := collection.Find(ctx, bsonFilter, opts)
 	if err != nil {
 		return nil, err
 	}

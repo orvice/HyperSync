@@ -3,7 +3,7 @@ module go.orx.me/apps/hyper-sync
 go 1.24.1
 
 require (
-	butterfly.orx.me/core v0.0.0-20250326150726-e3b4a5d6dff9
+	butterfly.orx.me/core v0.0.0-20250621160607-8cd37657d336
 	connectrpc.com/connect v1.18.1
 	github.com/bluesky-social/indigo v0.0.0-20250411024310-8500c47d717c
 	github.com/gin-gonic/gin v1.10.0
