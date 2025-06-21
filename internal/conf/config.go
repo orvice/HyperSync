@@ -12,7 +12,6 @@ var (
 
 type Config struct {
 	Socials   map[string]*social.PlatformConfig
-	Server    *ServerConfig
 	Database  *DatabaseConfig
 	Memos     *MemosConfig
 	Sync      *SyncConfig
