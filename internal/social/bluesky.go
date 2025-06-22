@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
+	"butterfly.orx.me/core/log"
 	"github.com/bluesky-social/indigo/api/atproto"
 	"github.com/bluesky-social/indigo/xrpc"
 )
@@ -77,6 +79,7 @@ func NewBlueskyClientFromEnv() (*BlueskyClient, error) {
 
 // Post 发布一条Bluesky帖子
 func (b *BlueskyClient) Post(ctx context.Context, post *Post) (interface{}, error) {
+	logger := log.FromContext(ctx)
 	// 使用HTTP客户端直接发出请求
 	url := fmt.Sprintf("%s/xrpc/com.atproto.repo.createRecord", b.Client.Host)
 
@@ -92,51 +95,36 @@ func (b *BlueskyClient) Post(ctx context.Context, post *Post) (interface{}, erro
 
 	// 处理媒体附件
 	if len(post.Media) > 0 {
-		// 创建空的 embed 图像容器
-		facets := []interface{}{}
-
 		// 上传每个媒体文件并添加到 embed
+		var images []interface{}
 		for _, media := range post.Media {
 			// 获取媒体数据，可能需要从 URL 获取
 			mediaData, err := media.GetData()
 			if err != nil {
+				logger.Error("failed to get media data",
+					"error", err)
 				return nil, fmt.Errorf("failed to get media data: %w", err)
 			}
 
 			// 上传图像到 Bluesky
 			resp, err := atproto.RepoUploadBlob(ctx, b.Client, bytes.NewReader(mediaData))
 			if err != nil {
+				logger.Error("failed to upload media",
+					"error", err)
 				return nil, fmt.Errorf("failed to upload media: %w", err)
 			}
 
-			// 如果没有 embed 结构，创建一个
-			if _, ok := record["embed"]; !ok {
-				// 创建图像集合
-				record["embed"] = map[string]interface{}{
-					"$type":  "app.bsky.embed.images",
-					"images": []interface{}{},
-				}
-			}
-
-			// 添加图像到集合
-			images := record["embed"].(map[string]interface{})["images"].([]interface{})
+			// 添加图像到集合 - image字段应该直接是blob对象
 			images = append(images, map[string]interface{}{
-				"alt": "",
-				"image": map[string]interface{}{
-					"$type": "blob",
-					"ref": map[string]interface{}{
-						"$link": resp.Blob.Ref,
-					},
-					"mimeType": http.DetectContentType(mediaData),
-					"size":     len(mediaData),
-				},
+				"alt":   media.Description, // 使用媒体描述作为alt文本
+				"image": resp.Blob,         // 直接使用返回的blob对象
 			})
-			record["embed"].(map[string]interface{})["images"] = images
 		}
 
-		// 如果有 facets，添加到记录
-		if len(facets) > 0 {
-			record["facets"] = facets
+		// 设置embed结构
+		record["embed"] = map[string]interface{}{
+			"$type":  "app.bsky.embed.images",
+			"images": images,
 		}
 	}
 
@@ -150,6 +138,8 @@ func (b *BlueskyClient) Post(ctx context.Context, post *Post) (interface{}, erro
 
 	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
+		logger.Error("failed to marshal request body",
+			"error", err)
 		return nil, fmt.Errorf("failed to marshal request body: %w", err)
 	}
 
@@ -167,6 +157,8 @@ func (b *BlueskyClient) Post(ctx context.Context, post *Post) (interface{}, erro
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
+		logger.Error("failed to send request",
+			"error", err)
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
@@ -186,9 +178,22 @@ func (b *BlueskyClient) Post(ctx context.Context, post *Post) (interface{}, erro
 		CID string `json:"cid"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&respData); err != nil {
+	s, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logger.Error("failed to read response body",
+			"error", err)
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	if err := json.Unmarshal(s, &respData); err != nil {
+		logger.Error("failed to decode response",
+			"error", err)
 		return rkey, nil // 即使解析响应失败，我们也能返回自己生成的rkey
 	}
+
+	logger.Info("success to post to bluesky",
+		"response", string(s),
+		"post_id", respData.URI)
 
 	return respData, nil
 }
