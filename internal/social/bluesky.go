@@ -1,61 +1,49 @@
 package social
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"strings"
-	"time"
 
-	"github.com/bluesky-social/indigo/api/atproto"
-	"github.com/bluesky-social/indigo/xrpc"
+	"butterfly.orx.me/core/log"
+	"github.com/davhofer/botsky/pkg/botsky"
 )
 
-// BlueskyClient
+// BlueskyClient 使用 botsky 库的 Bluesky 客户端
 type BlueskyClient struct {
-	Client *xrpc.Client
+	name   string
+	client *botsky.Client
 }
 
 // NewBlueskyClient 创建一个新的Bluesky客户端
-func NewBlueskyClient(host, handle, password string) (*BlueskyClient, error) {
-	// 创建xrpc客户端
-	client := &xrpc.Client{
-		Host: host,
-	}
-
-	// 登录Bluesky获取认证信息
+func NewBlueskyClient(host, handle, password string, name string) (*BlueskyClient, error) {
 	ctx := context.Background()
-	auth, err := atproto.ServerCreateSession(ctx, client, &atproto.ServerCreateSession_Input{
-		Identifier: handle,
-		Password:   password,
-	})
+
+	// 使用 botsky 库创建客户端
+	client, err := botsky.NewClient(ctx, handle, password)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Bluesky session: %w", err)
+		return nil, fmt.Errorf("failed to create botsky client: %w", err)
 	}
 
-	// 设置认证信息
-	client.Auth = &xrpc.AuthInfo{
-		AccessJwt:  auth.AccessJwt,
-		RefreshJwt: auth.RefreshJwt,
-		Handle:     auth.Handle,
-		Did:        auth.Did,
+	// 进行认证
+	err = client.Authenticate(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to authenticate with Bluesky: %w", err)
 	}
 
 	return &BlueskyClient{
-		Client: client,
+		name:   name,
+		client: client,
 	}, nil
+}
+
+func (c *BlueskyClient) Name() string {
+	return c.name
 }
 
 // NewBlueskyClientFromEnv 从环境变量创建一个新的Bluesky客户端
 func NewBlueskyClientFromEnv() (*BlueskyClient, error) {
-	host := os.Getenv("BLUESKY_HOST")
-	if host == "" {
-		host = "https://bsky.social" // 默认API服务器
-	}
-
 	handle := os.Getenv("BLUESKY_HANDLE")
 	if handle == "" {
 		return nil, fmt.Errorf("BLUESKY_HANDLE environment variable is not set")
@@ -66,318 +54,213 @@ func NewBlueskyClientFromEnv() (*BlueskyClient, error) {
 		return nil, fmt.Errorf("BLUESKY_PASSWORD environment variable is not set")
 	}
 
-	return NewBlueskyClient(host, handle, password)
+	// botsky 使用 app password 而不是普通密码
+	// 如果用户提供的是 app password，直接使用；否则假设是 app password
+	return NewBlueskyClient("", handle, password, "bluesky")
 }
 
 // Post 发布一条Bluesky帖子
 func (b *BlueskyClient) Post(ctx context.Context, post *Post) (interface{}, error) {
-	// 使用HTTP客户端直接发出请求
-	url := fmt.Sprintf("%s/xrpc/com.atproto.repo.createRecord", b.Client.Host)
+	logger := log.FromContext(ctx)
 
-	// 生成一个唯一的rkey，使用当前时间戳
-	rkey := fmt.Sprintf("%d", time.Now().UnixNano())
-
-	// 创建基本的记录结构
-	record := map[string]interface{}{
-		"$type":     "app.bsky.feed.post",
-		"text":      post.Content,
-		"createdAt": time.Now().UTC().Format(time.RFC3339),
+	// 检查客户端是否已初始化
+	if b.client == nil {
+		return nil, fmt.Errorf("client not initialized")
 	}
+
+	logger.Info("creating bluesky post",
+		"content_length", len(post.Content),
+		"media_count", len(post.Media))
+
+	// 使用 botsky 的 PostBuilder 创建帖子
+	pb := botsky.NewPostBuilder(post.Content)
 
 	// 处理媒体附件
 	if len(post.Media) > 0 {
-		// 创建空的 embed 图像容器
-		facets := []interface{}{}
+		logger.Info("processing media attachments", "count", len(post.Media))
 
-		// 上传每个媒体文件并添加到 embed
-		for _, media := range post.Media {
-			// 获取媒体数据，可能需要从 URL 获取
+		var images []botsky.ImageSource
+		for i, media := range post.Media {
+			// 获取媒体数据
 			mediaData, err := media.GetData()
 			if err != nil {
-				return nil, fmt.Errorf("failed to get media data: %w", err)
+				logger.Error("failed to get media data",
+					"index", i,
+					"error", err)
+				return nil, fmt.Errorf("failed to get media data for attachment %d: %w", i, err)
 			}
 
-			// 上传图像到 Bluesky
-			resp, err := atproto.RepoUploadBlob(ctx, b.Client, bytes.NewReader(mediaData))
+			// 创建临时文件来存储媒体数据，因为 botsky 需要文件路径或URL
+			tmpFile, err := os.CreateTemp("", fmt.Sprintf("hypersync_media_%d_*.jpg", i))
 			if err != nil {
-				return nil, fmt.Errorf("failed to upload media: %w", err)
+				logger.Error("failed to create temp file",
+					"index", i,
+					"error", err)
+				return nil, fmt.Errorf("failed to create temp file for media %d: %w", i, err)
 			}
 
-			// 如果没有 embed 结构，创建一个
-			if _, ok := record["embed"]; !ok {
-				// 创建图像集合
-				record["embed"] = map[string]interface{}{
-					"$type":  "app.bsky.embed.images",
-					"images": []interface{}{},
+			// 写入媒体数据
+			_, err = tmpFile.Write(mediaData)
+			tmpFile.Close()
+			if err != nil {
+				os.Remove(tmpFile.Name())
+				logger.Error("failed to write media to temp file",
+					"index", i,
+					"error", err)
+				return nil, fmt.Errorf("failed to write media data for attachment %d: %w", i, err)
+			}
+
+			// 创建 ImageSource
+			imageSource := botsky.ImageSource{
+				Uri: tmpFile.Name(),
+				Alt: media.Description,
+			}
+			images = append(images, imageSource)
+
+			logger.Info("prepared media for upload",
+				"index", i,
+				"temp_file", tmpFile.Name(),
+				"alt_text", media.Description)
+
+			// 确保在函数结束时清理临时文件
+			defer func(filename string) {
+				if err := os.Remove(filename); err != nil {
+					logger.Warn("failed to remove temp file", "file", filename, "error", err)
 				}
-			}
-
-			// 添加图像到集合
-			images := record["embed"].(map[string]interface{})["images"].([]interface{})
-			images = append(images, map[string]interface{}{
-				"alt": "",
-				"image": map[string]interface{}{
-					"$type": "blob",
-					"ref": map[string]interface{}{
-						"$link": resp.Blob.Ref,
-					},
-					"mimeType": http.DetectContentType(mediaData),
-					"size":     len(mediaData),
-				},
-			})
-			record["embed"].(map[string]interface{})["images"] = images
+			}(tmpFile.Name())
 		}
 
-		// 如果有 facets，添加到记录
-		if len(facets) > 0 {
-			record["facets"] = facets
-		}
+		// 添加图像到帖子
+		pb = pb.AddImages(images)
 	}
 
-	// 创建请求体
-	reqBody := map[string]interface{}{
-		"repo":       b.Client.Auth.Did,
-		"collection": "app.bsky.feed.post",
-		"rkey":       rkey,
-		"record":     record,
-	}
-
-	jsonData, err := json.Marshal(reqBody)
+	// 发布帖子
+	logger.Info("posting to bluesky via botsky")
+	cid, uri, err := b.client.Post(ctx, pb)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request body: %w", err)
+		logger.Error("failed to post via botsky", "error", err)
+		return nil, fmt.Errorf("failed to post to Bluesky: %w", err)
 	}
 
-	// 创建请求
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+	logger.Info("successfully posted to bluesky",
+		"cid", cid,
+		"uri", uri)
+
+	// 从 URI 中提取 rkey (at://did:plc:xxx/app.bsky.feed.post/rkey)
+	parts := strings.Split(uri, "/")
+	var rkey string
+	if len(parts) > 0 {
+		rkey = parts[len(parts)-1]
 	}
 
-	// 添加请求头
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+b.Client.Auth.AccessJwt)
-
-	// 发送请求
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// 检查响应状态
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var errResp map[string]interface{}
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-			return nil, fmt.Errorf("failed with status %d", resp.StatusCode)
-		}
-		return nil, fmt.Errorf("failed with status %d: %v", resp.StatusCode, errResp)
-	}
-
-	// 解析响应以获取URI
-	var respData struct {
-		URI string `json:"uri"`
-		CID string `json:"cid"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&respData); err != nil {
-		return rkey, nil // 即使解析响应失败，我们也能返回自己生成的rkey
-	}
-
-	return respData, nil
+	// 返回与原始接口兼容的响应
+	return map[string]interface{}{
+		"uri":  uri,
+		"cid":  cid,
+		"rkey": rkey,
+	}, nil
 }
 
 // DeletePost 删除一条Bluesky帖子
 func (b *BlueskyClient) DeletePost(ctx context.Context, rkey string) error {
-	// 使用HTTP客户端直接发出请求
-	url := fmt.Sprintf("%s/xrpc/com.atproto.repo.deleteRecord", b.Client.Host)
+	logger := log.FromContext(ctx)
 
-	// 创建请求体
-	reqBody := map[string]interface{}{
-		"repo":       b.Client.Auth.Did,
-		"collection": "app.bsky.feed.post",
-		"rkey":       rkey,
+	if b.client == nil {
+		return fmt.Errorf("client not initialized")
 	}
 
-	jsonData, err := json.Marshal(reqBody)
+	logger.Info("deleting bluesky post", "rkey", rkey)
+
+	// 构造完整的 URI - at://did/app.bsky.feed.post/rkey
+	// 我们需要客户端的 DID 来构造完整的 URI
+	if b.client.Did == "" {
+		return fmt.Errorf("client DID not available")
+	}
+
+	postUri := fmt.Sprintf("at://%s/app.bsky.feed.post/%s", b.client.Did, rkey)
+	logger.Info("constructed post URI for deletion", "uri", postUri)
+
+	// 使用 botsky 的删除方法
+	err := b.client.RepoDeletePost(ctx, postUri)
 	if err != nil {
-		return fmt.Errorf("failed to marshal request body: %w", err)
+		logger.Error("failed to delete post via botsky", "error", err, "uri", postUri)
+		return fmt.Errorf("failed to delete post: %w", err)
 	}
 
-	// 创建请求
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// 添加请求头
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+b.Client.Auth.AccessJwt)
-
-	// 发送请求
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// 检查响应状态
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var errResp map[string]interface{}
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-			return fmt.Errorf("failed with status %d", resp.StatusCode)
-		}
-		return fmt.Errorf("failed with status %d: %v", resp.StatusCode, errResp)
-	}
-
+	logger.Info("successfully deleted bluesky post", "rkey", rkey, "uri", postUri)
 	return nil
-}
-
-// toJSONMap 将结构体转换为map[string]interface{}
-func toJSONMap(v interface{}) (map[string]interface{}, error) {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return nil, err
-	}
-
-	var m map[string]interface{}
-	if err := json.Unmarshal(data, &m); err != nil {
-		return nil, err
-	}
-
-	return m, nil
 }
 
 // ListPosts 获取当前用户的最新帖子
 func (b *BlueskyClient) ListPosts(ctx context.Context, limit int) ([]*Post, error) {
+	logger := log.FromContext(ctx)
+
+	if b.client == nil {
+		return nil, fmt.Errorf("client not initialized")
+	}
+
 	// 设置默认限制
 	if limit <= 0 {
 		limit = 20
 	}
 
-	// 获取用户 DID
-	did := b.Client.Auth.Did
-	if did == "" {
-		return nil, fmt.Errorf("user DID not found in client auth")
-	}
+	logger.Info("listing bluesky posts", "limit", limit, "did", b.client.Did)
 
-	// 获取用户的帖子
-	feed, err := b.getAuthorFeed(ctx, did, limit)
+	// 使用 GetPosts 方法获取当前用户的帖子
+	// 如果遇到服务器错误，我们提供优雅的处理
+	richPosts, err := b.client.GetPosts(ctx, b.client.Did, limit)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get author feed: %w", err)
-	}
+		logger.Error("failed to get posts via botsky", "error", err)
 
-	// 转换为 Post 类型
-	posts := make([]*Post, 0, len(feed.Feed))
-	for _, item := range feed.Feed {
-		// 检查 post 记录是否存在
-		if item.Post == nil || item.Post.Record == nil {
-			continue
+		// 检查是否是服务器错误 (502, 503 等)
+		if strings.Contains(err.Error(), "502") || strings.Contains(err.Error(), "503") || strings.Contains(err.Error(), "Internal Server Error") {
+			logger.Warn("bluesky server error detected, returning empty list for graceful degradation")
+			// 对于服务器错误，返回空列表而不是失败，这样不会阻止其他功能
+			return []*Post{}, nil
 		}
 
-		// 提取记录 ID
-		parts := strings.Split(item.Post.URI, "/")
-		rkey := ""
+		return nil, fmt.Errorf("failed to list posts: %w", err)
+	}
+
+	logger.Info("retrieved posts from botsky", "count", len(richPosts))
+
+	return b.convertRichPostsToInternalPosts(ctx, richPosts), nil
+}
+
+// convertRichPostsToInternalPosts 将 RichPost 转换为内部 Post 结构（后备方法）
+func (b *BlueskyClient) convertRichPostsToInternalPosts(ctx context.Context, richPosts []*botsky.RichPost) []*Post {
+	logger := log.FromContext(ctx)
+
+	posts := make([]*Post, 0, len(richPosts))
+	for i, richPost := range richPosts {
+		// 从 URI 中提取 rkey (at://did:plc:xxx/app.bsky.feed.post/rkey)
+		parts := strings.Split(richPost.Uri, "/")
+		var rkey string
 		if len(parts) > 0 {
 			rkey = parts[len(parts)-1]
 		}
 
-		// 创建 post 对象
+		// 转换为我们的 Post 结构
 		post := &Post{
-			ID:         rkey,
-			Content:    item.Post.Record.Text,
-			Visibility: "public", // Bluesky 目前没有可见性设置，默认为公开
+			ID:             rkey,
+			Content:        richPost.Text,
+			SourcePlatform: "bluesky",
 		}
 
-		// 处理媒体附件
-		if item.Post.Embed != nil && item.Post.Embed.Images != nil && len(item.Post.Embed.Images) > 0 {
-			// 我们没有原始媒体数据，只是记录媒体存在
-			post.Media = []Media{}
+		// 处理媒体附件（如果有的话）
+		if richPost.Embed != nil {
+			logger.Debug("post has embeds", "index", i, "rkey", rkey)
 		}
 
 		posts = append(posts, post)
+
+		logger.Debug("converted rich post to our format",
+			"index", i,
+			"rkey", rkey,
+			"content_length", len(post.Content),
+			"uri", richPost.Uri)
 	}
 
-	return posts, nil
-}
-
-// getAuthorFeed 获取作者的帖子流
-func (b *BlueskyClient) getAuthorFeed(ctx context.Context, did string, limit int) (*struct {
-	Feed []struct {
-		Post *struct {
-			URI    string `json:"uri"`
-			CID    string `json:"cid"`
-			Record *struct {
-				Text string `json:"text"`
-			} `json:"record"`
-			Embed *struct {
-				Images []interface{} `json:"images"`
-			} `json:"embed,omitempty"`
-		} `json:"post"`
-	} `json:"feed"`
-}, error) {
-	// 使用 HTTP 客户端直接发出请求
-	url := fmt.Sprintf("%s/xrpc/app.bsky.feed.getAuthorFeed", b.Client.Host)
-
-	// 创建请求参数
-	params := map[string]interface{}{
-		"actor": did,
-		"limit": limit,
-	}
-
-	// 构建查询字符串
-	var queryParts []string
-	for k, v := range params {
-		queryParts = append(queryParts, fmt.Sprintf("%s=%v", k, v))
-	}
-	fullURL := fmt.Sprintf("%s?%s", url, strings.Join(queryParts, "&"))
-
-	// 创建请求
-	req, err := http.NewRequestWithContext(ctx, "GET", fullURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// 添加请求头
-	req.Header.Set("Authorization", "Bearer "+b.Client.Auth.AccessJwt)
-
-	// 发送请求
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// 检查响应状态
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var errResp map[string]interface{}
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-			return nil, fmt.Errorf("failed with status %d", resp.StatusCode)
-		}
-		return nil, fmt.Errorf("failed with status %d: %v", resp.StatusCode, errResp)
-	}
-
-	// 解析响应
-	var feed struct {
-		Feed []struct {
-			Post *struct {
-				URI    string `json:"uri"`
-				CID    string `json:"cid"`
-				Record *struct {
-					Text string `json:"text"`
-				} `json:"record"`
-				Embed *struct {
-					Images []interface{} `json:"images"`
-				} `json:"embed,omitempty"`
-			} `json:"post"`
-		} `json:"feed"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&feed); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return &feed, nil
+	logger.Info("successfully converted rich posts", "final_count", len(posts))
+	return posts
 }

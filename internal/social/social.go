@@ -11,6 +11,7 @@ import (
 type SocialClient interface {
 	Post(ctx context.Context, post *Post) (interface{}, error)
 	ListPosts(ctx context.Context, limit int) ([]*Post, error)
+	Name() string
 }
 
 type Post struct {
@@ -20,6 +21,8 @@ type Post struct {
 	Media          []Media
 	SourcePlatform string
 	OriginalID     string
+
+	CreatedAt time.Time
 }
 
 type Media struct {
@@ -176,6 +179,15 @@ func InitSocialPlatforms(configs map[string]*PlatformConfig) ([]*SocialPlatform,
 
 		// Initialize the appropriate client based on type
 		switch config.Type {
+		case "memos":
+			if config.Memos == nil {
+				return nil, fmt.Errorf("missing Memos config for %s", name)
+			}
+			if config.Memos.Endpoint == "" || config.Memos.Token == "" {
+				return nil, fmt.Errorf("missing Memos credentials for %s", name)
+			}
+			client = NewMemos(config.Memos.Endpoint, config.Memos.Token, config.Name)
+
 		case "mastodon":
 			if config.Mastodon == nil {
 				return nil, fmt.Errorf("missing Mastodon config for %s", name)
@@ -185,7 +197,7 @@ func InitSocialPlatforms(configs map[string]*PlatformConfig) ([]*SocialPlatform,
 				return nil, fmt.Errorf("missing Mastodon credentials for %s", name)
 			}
 
-			client = NewMastodonClient(config.Mastodon.Instance, config.Mastodon.Token)
+			client = NewMastodonClient(config.Mastodon.Instance, config.Mastodon.Token, config.Name)
 
 		case "bluesky":
 			if config.Bluesky == nil {
@@ -196,7 +208,7 @@ func InitSocialPlatforms(configs map[string]*PlatformConfig) ([]*SocialPlatform,
 				return nil, fmt.Errorf("missing Bluesky credentials for %s", name)
 			}
 
-			client, err = NewBlueskyClient(config.Bluesky.Host, config.Bluesky.Handle, config.Bluesky.Password)
+			client, err = NewBlueskyClient(config.Bluesky.Host, config.Bluesky.Handle, config.Bluesky.Password, config.Name)
 			if err != nil {
 				return nil, fmt.Errorf("failed to initialize Bluesky client for %s: %w", name, err)
 			}

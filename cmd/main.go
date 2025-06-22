@@ -2,47 +2,54 @@ package main
 
 import (
 	"context"
-	"log"
 	"time"
 
 	"butterfly.orx.me/core"
 	"butterfly.orx.me/core/app"
+	"butterfly.orx.me/core/log"
+
 	"go.orx.me/apps/hyper-sync/internal/conf"
 	"go.orx.me/apps/hyper-sync/internal/http"
+	"go.orx.me/apps/hyper-sync/internal/wire"
 )
 
+// Global API server instance
+
 func NewApp() *app.App {
-	app := core.New(&app.Config{
-		Config:   conf.Conf,
-		Service:  "hyper-sync",
-		Router:   http.Router,
-		InitFunc: []func() error{initSyncJob},
+	appCore := core.New(&app.Config{
+		Config:  conf.Conf,
+		Service: "hyper-sync",
+		Router:  http.Router,
+		InitFunc: []func() error{
+			InitJob,
+		},
 	})
-	return app
-}
-
-// initSyncJob initializes and starts the post sync job
-func initSyncJob() error {
-	log.Println("Initializing post sync job")
-
-	// Get service providers from the app context
-	postService := http.GetPostService()
-	if postService == nil {
-		return nil // Services not initialized yet
-	}
-
-	// Start the sync job with a 15-minute interval
-	err := postService.StartSyncJob(context.Background(), 15*time.Minute)
-	if err != nil {
-		log.Printf("Failed to start post sync job: %v", err)
-		return err
-	}
-
-	log.Println("Post sync job initialized successfully")
-	return nil
+	return appCore
 }
 
 func main() {
 	app := NewApp()
 	app.Run()
+}
+
+func InitJob() error {
+	syncService, err := wire.NewSyncService()
+	if err != nil {
+		return err
+	}
+
+	logger := log.FromContext(context.Background())
+
+	go func() {
+		for {
+			err := syncService.Sync(context.Background())
+			if err != nil {
+				logger.Error("Sync failed",
+					"error", err)
+			}
+			time.Sleep(30 * time.Second)
+		}
+	}()
+
+	return nil
 }

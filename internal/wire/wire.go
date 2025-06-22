@@ -5,15 +5,14 @@ package wire
 
 import (
 	"github.com/google/wire"
-	"go.orx.me/apps/hyper-sync/internal/app"
 	"go.orx.me/apps/hyper-sync/internal/dao"
+	"go.orx.me/apps/hyper-sync/internal/service"
 )
 
-func NewApiServer() (*app.ApiServer, error) {
-	wire.Build(
-		dao.NewMongoDAO,
-		app.NewApiServer,
+func NewSyncService() (*service.SyncService, error) {
+	panic(wire.Build(
 		dao.NewMongoClient,
-	)
-	return &app.ApiServer{}, nil
+		dao.NewMongoDAO,
+		service.NewSyncService,
+	))
 }

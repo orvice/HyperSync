@@ -15,7 +15,7 @@ import (
 )
 
 // setupTestDB initializes a test MongoDB connection
-func setupTestDB(t *testing.T) (*MongoDAO, func()) {
+func setupTestDB(t *testing.T) (PostDao, func()) {
 	// Connect to MongoDB
 	ctx := context.Background()
 	clientOptions := options.Client().ApplyURI("mongodb://localhost:27017")
@@ -24,7 +24,7 @@ func setupTestDB(t *testing.T) (*MongoDAO, func()) {
 
 	// Create a unique database name for this test run
 	dbName := "hyper_sync_test_" + time.Now().Format("20060102150405")
-	dao := NewMongoDAO(client, dbName)
+	dao := NewMongoDAO(client)
 
 	// Return cleanup function
 	cleanup := func() {

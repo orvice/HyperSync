@@ -18,7 +18,7 @@ func TestNewMastodonClient(t *testing.T) {
 	instanceURL := os.Getenv("MASTODON_INSTANCE")
 	accessToken := os.Getenv("MASTODON_TOKEN")
 
-	client := social.NewMastodonClient(instanceURL, accessToken)
+	client := social.NewMastodonClient(instanceURL, accessToken, "mastodon")
 
 	if client == nil {
 		t.Fatalf("Client is nil")
@@ -38,7 +38,7 @@ func TestMastodonPost(t *testing.T) {
 	instanceURL := os.Getenv("MASTODON_INSTANCE")
 	accessToken := os.Getenv("MASTODON_TOKEN")
 
-	client := social.NewMastodonClient(instanceURL, accessToken)
+	client := social.NewMastodonClient(instanceURL, accessToken, "mastodon")
 
 	// Test posting - only run this if specifically enabled with TEST_POST=1
 	if os.Getenv("TEST_POST") == "1" {
@@ -82,7 +82,7 @@ func TestMastodonPostWithMedia(t *testing.T) {
 	instanceURL := os.Getenv("MASTODON_INSTANCE")
 	accessToken := os.Getenv("MASTODON_TOKEN")
 
-	client := social.NewMastodonClient(instanceURL, accessToken)
+	client := social.NewMastodonClient(instanceURL, accessToken, "mastodon")
 
 	// Create a test image (1x1 pixel PNG)
 	// This is a minimal valid PNG file (1x1 transparent pixel)
@@ -134,7 +134,7 @@ func TestMastodonPostWithURLMedia(t *testing.T) {
 	instanceURL := os.Getenv("MASTODON_INSTANCE")
 	accessToken := os.Getenv("MASTODON_TOKEN")
 
-	client := social.NewMastodonClient(instanceURL, accessToken)
+	client := social.NewMastodonClient(instanceURL, accessToken, "mastodon")
 
 	// Create a media object from URL - using a reliable test image
 	media := social.NewMediaFromURL("https://httpbin.org/image/png")
@@ -170,7 +170,7 @@ func TestMastodonListPosts(t *testing.T) {
 	instanceURL := os.Getenv("MASTODON_INSTANCE")
 	accessToken := os.Getenv("MASTODON_TOKEN")
 
-	client := social.NewMastodonClient(instanceURL, accessToken)
+	client := social.NewMastodonClient(instanceURL, accessToken, "mastodon")
 
 	// Get posts for the authenticated user
 	posts, err := client.ListPosts(context.Background(), 5)
