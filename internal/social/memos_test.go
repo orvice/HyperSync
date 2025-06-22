@@ -1,6 +1,7 @@
 package social
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -18,7 +19,7 @@ func TestMemos_ListMemos_Localhost(t *testing.T) {
 		t.Skip("MEMOS_ENDPOINT environment variable not set, skipping localhost test")
 	}
 
-	memos := NewMemos(endpoint, token)
+	memos := NewMemos(endpoint, token, "memos")
 
 	response, err := memos.ListMemos(nil)
 	if err != nil {
@@ -34,6 +35,17 @@ func TestMemos_ListMemos_Localhost(t *testing.T) {
 
 	for _, memo := range response.Memos {
 		t.Logf("Memo: %+v, %+v, %+v", memo.Name, memo.CreateTime, len(memo.Resources))
+	}
+
+	posts, err := memos.ListPosts(context.Background(), 10)
+	if err != nil {
+		t.Errorf("Expected no error, got %v", err)
+	}
+
+	t.Logf("Successfully retrieved %d posts", len(posts))
+
+	for _, post := range posts {
+		t.Logf("Post: %+v", post)
 	}
 }
 
@@ -241,7 +253,7 @@ func TestMemos_ListMemos(t *testing.T) {
 			defer server.Close()
 
 			// 创建Memos实例
-			memos := NewMemos(server.URL, tt.token)
+			memos := NewMemos(server.URL, tt.token, "memos")
 
 			// 执行测试
 			response, err := memos.ListMemos(tt.request)
@@ -329,7 +341,7 @@ func TestMemos_ListMemos_InvalidJSON(t *testing.T) {
 	}))
 	defer server.Close()
 
-	memos := NewMemos(server.URL, "test-token")
+	memos := NewMemos(server.URL, "test-token", "memos")
 	_, err := memos.ListMemos(nil)
 
 	if err == nil {
@@ -339,7 +351,7 @@ func TestMemos_ListMemos_InvalidJSON(t *testing.T) {
 
 func TestMemos_ListMemos_NetworkError(t *testing.T) {
 	// 测试网络错误的情况
-	memos := NewMemos("http://invalid-url-that-does-not-exist", "test-token")
+	memos := NewMemos("http://invalid-url-that-does-not-exist", "test-token", "memos")
 	_, err := memos.ListMemos(nil)
 
 	if err == nil {
@@ -351,7 +363,7 @@ func TestNewMemos(t *testing.T) {
 	endpoint := "https://memos.example.com"
 	token := "test-token"
 
-	memos := NewMemos(endpoint, token)
+	memos := NewMemos(endpoint, token, "memos")
 
 	if memos == nil {
 		t.Fatal("Expected Memos instance, got nil")

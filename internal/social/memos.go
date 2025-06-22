@@ -13,15 +13,17 @@ import (
 )
 
 type Memos struct {
+	name     string
 	Endpoint string
 	Token    string
 }
 
-func NewMemos(endpoint, token string) *Memos {
+func NewMemos(endpoint, token, name string) *Memos {
 	endpoint = strings.TrimSuffix(endpoint, "/")
 	return &Memos{
 		Endpoint: endpoint,
 		Token:    token,
+		name:     name,
 	}
 }
 
@@ -150,6 +152,10 @@ func (m *Memos) ListMemos(req *ListMemosRequest) (*ListMemosResponse, error) {
 	return &response, nil
 }
 
+func (m *Memos) Name() string {
+	return m.name
+}
+
 // Post implements SocialClient interface - posts content to Memos
 func (m *Memos) Post(ctx context.Context, post *Post) (interface{}, error) {
 	// TODO: Implement Memos posting logic
@@ -171,10 +177,10 @@ func (m *Memos) ListPosts(ctx context.Context, limit int) ([]*Post, error) {
 	var posts []*Post
 	for _, memo := range resp.Memos {
 		post := &Post{
-			ID:             memo.UID,
+			ID:             memo.Name,
 			Content:        memo.Content,
 			Visibility:     strings.ToLower(memo.Visibility),
-			SourcePlatform: "memos",
+			SourcePlatform: m.name,
 			OriginalID:     memo.UID,
 			CreatedAt:      memo.CreateTime,
 		}

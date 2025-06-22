@@ -16,11 +16,12 @@ import (
 
 // BlueskyClient
 type BlueskyClient struct {
+	name   string
 	Client *xrpc.Client
 }
 
 // NewBlueskyClient 创建一个新的Bluesky客户端
-func NewBlueskyClient(host, handle, password string) (*BlueskyClient, error) {
+func NewBlueskyClient(host, handle, password string, name string) (*BlueskyClient, error) {
 	// 创建xrpc客户端
 	client := &xrpc.Client{
 		Host: host,
@@ -45,8 +46,13 @@ func NewBlueskyClient(host, handle, password string) (*BlueskyClient, error) {
 	}
 
 	return &BlueskyClient{
+		name:   name,
 		Client: client,
 	}, nil
+}
+
+func (c *BlueskyClient) Name() string {
+	return c.name
 }
 
 // NewBlueskyClientFromEnv 从环境变量创建一个新的Bluesky客户端
@@ -66,7 +72,7 @@ func NewBlueskyClientFromEnv() (*BlueskyClient, error) {
 		return nil, fmt.Errorf("BLUESKY_PASSWORD environment variable is not set")
 	}
 
-	return NewBlueskyClient(host, handle, password)
+	return NewBlueskyClient(host, handle, password, "bluesky")
 }
 
 // Post 发布一条Bluesky帖子

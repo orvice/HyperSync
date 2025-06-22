@@ -8,10 +8,11 @@ import (
 )
 
 type MastodonClient struct {
+	name   string
 	Client *mastodon.Client
 }
 
-func NewMastodonClient(instanceURL, accessToken string) *MastodonClient {
+func NewMastodonClient(instanceURL, accessToken, name string) *MastodonClient {
 	config := &mastodon.Config{
 		Server:      instanceURL,
 		AccessToken: accessToken,
@@ -22,7 +23,12 @@ func NewMastodonClient(instanceURL, accessToken string) *MastodonClient {
 
 	return &MastodonClient{
 		Client: c,
+		name:   name,
 	}
+}
+
+func (c *MastodonClient) Name() string {
+	return c.name
 }
 
 // Post publishes a new status to Mastodon
