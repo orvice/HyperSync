@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -375,5 +376,119 @@ func TestNewMemos(t *testing.T) {
 
 	if memos.Token != token {
 		t.Errorf("Expected token %s, got %s", token, memos.Token)
+	}
+}
+
+// TestListMemosDefaultOrderBy tests that the default orderBy parameter is set correctly
+func TestListMemosDefaultOrderBy(t *testing.T) {
+	// Create a test server to capture the request parameters
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Parse query parameters
+		queryParams := r.URL.Query()
+
+		// Check that orderBy parameter is set to "display_time desc"
+		orderBy := queryParams.Get("orderBy")
+		if orderBy != "display_time desc" {
+			t.Errorf("Expected orderBy to be 'display_time desc', got '%s'", orderBy)
+		}
+
+		// Return a minimal valid response
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"memos": [], "nextPageToken": ""}`))
+	}))
+	defer server.Close()
+
+	// Create Memos client with test server URL
+	memos := NewMemos(server.URL, "test-token", "test-memos")
+
+	t.Run("Default orderBy with nil request", func(t *testing.T) {
+		// Test with nil request - should set default orderBy
+		_, err := memos.ListMemos(nil)
+		if err != nil {
+			t.Errorf("ListMemos failed: %v", err)
+		}
+	})
+
+	t.Run("Default orderBy with empty OrderBy field", func(t *testing.T) {
+		// Test with empty OrderBy field - should set default orderBy
+		req := &ListMemosRequest{
+			PageSize: 10,
+			// OrderBy is empty, should use default
+		}
+		_, err := memos.ListMemos(req)
+		if err != nil {
+			t.Errorf("ListMemos failed: %v", err)
+		}
+	})
+}
+
+// TestListMemosCustomOrderBy tests that custom orderBy parameter is preserved
+func TestListMemosCustomOrderBy(t *testing.T) {
+	customOrderBy := "create_time asc"
+
+	// Create a test server to capture the request parameters
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Parse query parameters
+		queryParams := r.URL.Query()
+
+		// Check that orderBy parameter is set to our custom value
+		orderBy := queryParams.Get("orderBy")
+		if orderBy != customOrderBy {
+			t.Errorf("Expected orderBy to be '%s', got '%s'", customOrderBy, orderBy)
+		}
+
+		// Return a minimal valid response
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"memos": [], "nextPageToken": ""}`))
+	}))
+	defer server.Close()
+
+	// Create Memos client with test server URL
+	memos := NewMemos(server.URL, "test-token", "test-memos")
+
+	// Test with custom OrderBy field - should preserve the custom value
+	req := &ListMemosRequest{
+		PageSize: 10,
+		OrderBy:  customOrderBy,
+	}
+	_, err := memos.ListMemos(req)
+	if err != nil {
+		t.Errorf("ListMemos failed: %v", err)
+	}
+}
+
+// TestMemosURLConstruction tests that URLs are constructed correctly
+func TestMemosURLConstruction(t *testing.T) {
+	expectedPath := "/api/v1/memos"
+
+	// Create a test server to capture the request
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check the request path
+		if r.URL.Path != expectedPath {
+			t.Errorf("Expected path to be '%s', got '%s'", expectedPath, r.URL.Path)
+		}
+
+		// Check that Authorization header is set
+		authHeader := r.Header.Get("Authorization")
+		if !strings.HasPrefix(authHeader, "Bearer ") {
+			t.Errorf("Expected Authorization header to start with 'Bearer ', got '%s'", authHeader)
+		}
+
+		// Return a minimal valid response
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"memos": [], "nextPageToken": ""}`))
+	}))
+	defer server.Close()
+
+	// Create Memos client with test server URL
+	memos := NewMemos(server.URL, "test-token", "test-memos")
+
+	// Test URL construction
+	_, err := memos.ListMemos(&ListMemosRequest{PageSize: 5})
+	if err != nil {
+		t.Errorf("ListMemos failed: %v", err)
 	}
 }

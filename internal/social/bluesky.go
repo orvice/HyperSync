@@ -171,42 +171,24 @@ func (b *BlueskyClient) DeletePost(ctx context.Context, rkey string) error {
 
 	logger.Info("deleting bluesky post", "rkey", rkey)
 
-	// botsky 目前可能没有直接的删除方法，我们需要使用底层的 AT Protocol 方法
-	// 这里我们需要构造完整的 URI 然后删除
-	// 格式: at://did/app.bsky.feed.post/rkey
+	// 构造完整的 URI - at://did/app.bsky.feed.post/rkey
+	// 我们需要客户端的 DID 来构造完整的 URI
+	if b.client.Did == "" {
+		return fmt.Errorf("client DID not available")
+	}
 
-	// 获取客户端的 DID（我们需要从 botsky 客户端中获取这个信息）
-	// 由于 botsky 可能没有直接暴露 DID，我们需要使用一个变通方法
+	postUri := fmt.Sprintf("at://%s/app.bsky.feed.post/%s", b.client.Did, rkey)
+	logger.Info("constructed post URI for deletion", "uri", postUri)
 
-	// 首先尝试列出最近的帖子来找到要删除的帖子
-	posts, err := b.ListPosts(ctx, 50) // 获取更多帖子来寻找目标
+	// 使用 botsky 的删除方法
+	err := b.client.RepoDeletePost(ctx, postUri)
 	if err != nil {
-		logger.Error("failed to list posts for deletion", "error", err)
-		return fmt.Errorf("failed to list posts to find deletion target: %w", err)
+		logger.Error("failed to delete post via botsky", "error", err, "uri", postUri)
+		return fmt.Errorf("failed to delete post: %w", err)
 	}
 
-	// 查找要删除的帖子
-	var targetURI string
-	for _, post := range posts {
-		if post.ID == rkey {
-			// 我们需要构造 URI，但我们没有直接的方法获取 DID
-			// 作为临时解决方案，我们可以从现有帖子的结构中推断
-			logger.Info("found post to delete", "post_id", post.ID)
-			targetURI = fmt.Sprintf("at://%s/app.bsky.feed.post/%s", "USER_DID", rkey)
-			break
-		}
-	}
-
-	if targetURI == "" {
-		return fmt.Errorf("post with rkey %s not found in recent posts", rkey)
-	}
-
-	logger.Warn("delete functionality needs to be implemented with botsky's underlying client")
-
-	// TODO: 实现使用 botsky 底层客户端的删除功能
-	// 目前 botsky 可能没有直接的删除 API，需要使用底层的 xrpc 客户端
-
-	return fmt.Errorf("delete functionality not yet implemented with botsky library")
+	logger.Info("successfully deleted bluesky post", "rkey", rkey, "uri", postUri)
+	return nil
 }
 
 // ListPosts 获取当前用户的最新帖子
@@ -222,14 +204,63 @@ func (b *BlueskyClient) ListPosts(ctx context.Context, limit int) ([]*Post, erro
 		limit = 20
 	}
 
-	logger.Info("listing bluesky posts", "limit", limit)
+	logger.Info("listing bluesky posts", "limit", limit, "did", b.client.Did)
 
-	// botsky 目前可能没有直接的 ListPosts 方法
-	// 我们需要实现一个临时解决方案或者等待 botsky 添加这个功能
+	// 使用 GetPosts 方法获取当前用户的帖子
+	// 如果遇到服务器错误，我们提供优雅的处理
+	richPosts, err := b.client.GetPosts(ctx, b.client.Did, limit)
+	if err != nil {
+		logger.Error("failed to get posts via botsky", "error", err)
 
-	logger.Warn("list posts functionality needs to be implemented with botsky's underlying client")
+		// 检查是否是服务器错误 (502, 503 等)
+		if strings.Contains(err.Error(), "502") || strings.Contains(err.Error(), "503") || strings.Contains(err.Error(), "Internal Server Error") {
+			logger.Warn("bluesky server error detected, returning empty list for graceful degradation")
+			// 对于服务器错误，返回空列表而不是失败，这样不会阻止其他功能
+			return []*Post{}, nil
+		}
 
-	// TODO: 实现使用 botsky 底层客户端的列表功能
-	// 目前返回空列表，避免测试失败
-	return []*Post{}, nil
+		return nil, fmt.Errorf("failed to list posts: %w", err)
+	}
+
+	logger.Info("retrieved posts from botsky", "count", len(richPosts))
+
+	return b.convertRichPostsToInternalPosts(ctx, richPosts), nil
+}
+
+// convertRichPostsToInternalPosts 将 RichPost 转换为内部 Post 结构（后备方法）
+func (b *BlueskyClient) convertRichPostsToInternalPosts(ctx context.Context, richPosts []*botsky.RichPost) []*Post {
+	logger := log.FromContext(ctx)
+
+	posts := make([]*Post, 0, len(richPosts))
+	for i, richPost := range richPosts {
+		// 从 URI 中提取 rkey (at://did:plc:xxx/app.bsky.feed.post/rkey)
+		parts := strings.Split(richPost.Uri, "/")
+		var rkey string
+		if len(parts) > 0 {
+			rkey = parts[len(parts)-1]
+		}
+
+		// 转换为我们的 Post 结构
+		post := &Post{
+			ID:             rkey,
+			Content:        richPost.Text,
+			SourcePlatform: "bluesky",
+		}
+
+		// 处理媒体附件（如果有的话）
+		if richPost.Embed != nil {
+			logger.Debug("post has embeds", "index", i, "rkey", rkey)
+		}
+
+		posts = append(posts, post)
+
+		logger.Debug("converted rich post to our format",
+			"index", i,
+			"rkey", rkey,
+			"content_length", len(post.Content),
+			"uri", richPost.Uri)
+	}
+
+	logger.Info("successfully converted rich posts", "final_count", len(posts))
+	return posts
 }

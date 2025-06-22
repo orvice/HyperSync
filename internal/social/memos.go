@@ -99,6 +99,9 @@ func (m *Memos) ListMemos(req *ListMemosRequest) (*ListMemosResponse, error) {
 		}
 		if req.OrderBy != "" {
 			params.Set("orderBy", req.OrderBy)
+		} else {
+			// 设置默认排序为 display_time desc
+			params.Set("orderBy", "display_time desc")
 		}
 		if req.Tag != "" {
 			params.Set("tag", req.Tag)
@@ -106,6 +109,9 @@ func (m *Memos) ListMemos(req *ListMemosRequest) (*ListMemosResponse, error) {
 		if req.ContentSearch != "" {
 			params.Set("contentSearch", req.ContentSearch)
 		}
+	} else {
+		// 如果 req 为 nil，设置默认排序
+		params.Set("orderBy", "display_time desc")
 	}
 
 	if len(params) > 0 {
