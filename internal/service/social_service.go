@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"go.orx.me/apps/hyper-sync/internal/conf"
 	"go.orx.me/apps/hyper-sync/internal/social"
 )
 
@@ -13,7 +14,8 @@ type SocialService struct {
 }
 
 // NewSocialService creates a new social service
-func NewSocialService(config map[string]*social.PlatformConfig) (*SocialService, error) {
+func NewSocialService() (*SocialService, error) {
+	config := conf.Conf.Socials
 	// Initialize platforms with the configuration
 	platforms, err := social.InitSocialPlatforms(config)
 	if err != nil {

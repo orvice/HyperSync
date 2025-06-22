@@ -13,10 +13,14 @@ import (
 
 // Injectors from wire.go:
 
-func NewSyncService() (*service.SyncService, error) {
+func NewSyncService(mainSocail string, socials []string) (*service.SyncService, error) {
 	client := dao.NewMongoClient()
 	postDao := dao.NewMongoDAO(client)
-	syncService, err := service.NewSyncService(postDao)
+	socialService, err := service.NewSocialService()
+	if err != nil {
+		return nil, err
+	}
+	syncService, err := service.NewSyncService(postDao, socialService, mainSocail, socials)
 	if err != nil {
 		return nil, err
 	}
