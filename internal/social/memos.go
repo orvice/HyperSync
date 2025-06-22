@@ -176,10 +176,38 @@ func (m *Memos) ListPosts(ctx context.Context, limit int) ([]*Post, error) {
 
 	var posts []*Post
 	for _, memo := range resp.Memos {
+		var medias = make([]Media, 0)
+		if memo.Resources != nil {
+			for _, resource := range memo.Resources {
+				// 根据资源类型创建不同的 Media 对象
+				if resource.ExternalLink != "" {
+					// 如果有外部链接，使用外部链接创建 Media
+					media := NewMediaFromURL(resource.ExternalLink)
+					media.Description = resource.Filename
+					medias = append(medias, *media)
+				} else if resource.Content != "" {
+					// 如果有内容数据，使用内容创建 Media
+					// 注意：这里假设 Content 是 base64 编码的数据或直接的字节数据
+					// 实际情况可能需要根据 Memos API 的具体实现进行调整
+					media := NewMedia([]byte(resource.Content))
+					media.Description = resource.Filename
+					medias = append(medias, *media)
+				} else if resource.Name != "" {
+					// 如果有资源名称，构建资源 URL
+					// 假设资源可以通过 Memos 的 API 端点访问
+					resourceURL := fmt.Sprintf("%s/file/%s/%s", m.Endpoint, resource.Name, resource.Filename)
+					media := NewMediaFromURL(resourceURL)
+					media.Description = resource.Filename
+					medias = append(medias, *media)
+				}
+			}
+		}
+
 		post := &Post{
 			ID:             memo.Name,
 			Content:        memo.Content,
 			Visibility:     strings.ToLower(memo.Visibility),
+			Media:          medias,
 			SourcePlatform: m.name,
 			OriginalID:     memo.UID,
 			CreatedAt:      memo.CreateTime,
