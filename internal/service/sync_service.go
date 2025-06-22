@@ -6,7 +6,6 @@ import (
 
 	"butterfly.orx.me/core/log"
 	"go.opentelemetry.io/otel/trace"
-	"go.orx.me/apps/hyper-sync/internal/conf"
 	"go.orx.me/apps/hyper-sync/internal/dao"
 	"go.orx.me/apps/hyper-sync/internal/metrics"
 	"go.orx.me/apps/hyper-sync/internal/social"
@@ -23,34 +22,15 @@ type SyncService struct {
 	socials    []string
 }
 
-func NewSyncService(dao dao.PostDao) (*SyncService, error) {
-
-	socialConfig := conf.Conf.Socials
-
-	var mainSocial string
-
-	SocialService, err := NewSocialService(socialConfig)
-	if err != nil {
-		return nil, err
-	}
-
-	syncSocials := []string{}
-
-	// get main
-	for _, config := range socialConfig {
-		if config.Main {
-			mainSocial = config.Name
-			syncSocials = append(syncSocials, config.SyncTo...)
-		}
-	}
+func NewSyncService(dao dao.PostDao, socialService *SocialService, mainSocail string, socials []string) (*SyncService, error) {
 
 	return &SyncService{
-		mainSocail:    mainSocial,
-		socialService: SocialService,
+		mainSocail:    mainSocail,
+		socialService: socialService,
 		postDao:       dao,
-		socials:       syncSocials,
-		metrics:       metrics.NewSyncMetrics(mainSocial),
-		tracer:        telemetry.NewSyncTracer(mainSocial),
+		socials:       socials,
+		metrics:       metrics.NewSyncMetrics(mainSocail),
+		tracer:        telemetry.NewSyncTracer(mainSocail),
 	}, nil
 }
 

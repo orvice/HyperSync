@@ -9,10 +9,11 @@ import (
 	"go.orx.me/apps/hyper-sync/internal/service"
 )
 
-func NewSyncService() (*service.SyncService, error) {
+func NewSyncService(mainSocail string, socials []string) (*service.SyncService, error) {
 	panic(wire.Build(
 		dao.NewMongoClient,
 		dao.NewMongoDAO,
+		service.NewSocialService,
 		service.NewSyncService,
 	))
 }
