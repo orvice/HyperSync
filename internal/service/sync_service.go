@@ -79,7 +79,7 @@ func (s *SyncService) Sync(ctx context.Context) error {
 
 		var postID string
 		if postModel != nil {
-			logger.Debug("Post already exists in database", "post_id", post.ID, "db_id", postModel.ID.Hex())
+			logger.Info("Post already exists in database", "post_id", post.ID, "db_id", postModel.ID.Hex())
 			postID = postModel.ID.Hex()
 		} else {
 			// Create new post model and save to database
@@ -104,12 +104,16 @@ func (s *SyncService) Sync(ctx context.Context) error {
 			logger.Info("Successfully created post in database", "post_id", post.ID, "db_id", postID)
 		}
 
+		logger.Info("start to sync to other platforms",
+			"platforms", s.socials)
+
 		// Sync to other platforms
 		for _, targetSocial := range s.socials {
 			// Check if already synced successfully
 			if postModel.CrossPostStatus != nil {
 				if status, exists := postModel.CrossPostStatus[targetSocial]; exists && status.Success && status.CrossPosted {
-					logger.Debug("Post already synced successfully", "post_id", post.ID, "target_platform", targetSocial)
+					logger.Info("Post already synced successfully",
+						"post_id", post.ID, "target_platform", targetSocial)
 					continue
 				}
 			}

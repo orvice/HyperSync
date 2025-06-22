@@ -2,34 +2,34 @@ package social
 
 // PlatformConfig 包含社交平台的基础配置
 type PlatformConfig struct {
-	Name              string          // 平台名称
-	Type              string          // 平台类型 (mastodon, bluesky)
-	Main              bool            // 是否为主平台
-	Enabled           bool            // 是否启用
-	SyncEnabled       bool            // 是否启用同步功能
-	SyncFromPlatforms []string        // 允许从哪些平台同步内容
-	SyncCategories    []string        // 要同步的内容类别
-	Mastodon          *MastodonConfig // Mastodon 特定配置
-	Bluesky           *BlueskyConfig  // Bluesky 特定配置
-	Memos             *MemosConfig    // Memos 特定配置
+	Name              string          `yaml:"name"`                // 平台名称
+	Type              string          `yaml:"type"`                // 平台类型 (mastodon, bluesky)
+	Main              bool            `yaml:"main"`                // 是否为主平台
+	Enabled           bool            `yaml:"enabled"`             // 是否启用
+	SyncEnabled       bool            `yaml:"sync_enabled"`        // 是否启用同步功能
+	SyncFromPlatforms []string        `yaml:"sync_from_platforms"` // 允许从哪些平台同步内容
+	SyncCategories    []string        `yaml:"sync_categories"`     // 要同步的内容类别
+	Mastodon          *MastodonConfig `yaml:"mastodon,omitempty"`  // Mastodon 特定配置
+	Bluesky           *BlueskyConfig  `yaml:"bluesky,omitempty"`   // Bluesky 特定配置
+	Memos             *MemosConfig    `yaml:"memos,omitempty"`     // Memos 特定配置
 }
 
 type MemosConfig struct {
-	Endpoint string
-	Token    string
+	Endpoint string `yaml:"endpoint"`
+	Token    string `yaml:"token"`
 }
 
 // MastodonConfig 包含 Mastodon 平台的特定配置
 type MastodonConfig struct {
-	Instance string // Mastodon 实例域名
-	Token    string // 访问令牌
+	Instance string `yaml:"instance"` // Mastodon 实例域名
+	Token    string `yaml:"token"`    // 访问令牌
 }
 
 // BlueskyConfig 包含 Bluesky 平台的特定配置
 type BlueskyConfig struct {
-	Host     string // Bluesky 服务器
-	Handle   string // 用户名
-	Password string // 密码
+	Host     string `yaml:"host"`     // Bluesky 服务器
+	Handle   string `yaml:"handle"`   // 用户名
+	Password string `yaml:"password"` // 密码
 }
 
 // ShouldSyncPost 判断是否应该将内容从源平台同步到目标平台
