@@ -18,7 +18,7 @@ import (
 func NewApp() *app.App {
 	appCore := core.New(&app.Config{
 		Config:  conf.Conf,
-		Service: "hyper-sync",
+		Service: "hypersync",
 		Router:  http.Router,
 		InitFunc: []func() error{
 			InitJob,
