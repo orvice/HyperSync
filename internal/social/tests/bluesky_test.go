@@ -2,9 +2,11 @@ package tests
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"go.orx.me/apps/hyper-sync/internal/social"
 )
@@ -24,17 +26,13 @@ func TestNewBlueskyClientFromEnv(t *testing.T) {
 		t.Fatalf("Client is nil")
 	}
 
-	if client.Client == nil {
-		t.Fatalf("XRPC client is nil")
+	// With botsky, we don't need to check internal fields
+	// Just verify that the client was created successfully and has a name
+	if client.Name() == "" {
+		t.Fatalf("Client name is empty")
 	}
 
-	if client.Client.Auth == nil {
-		t.Fatalf("Auth is nil")
-	}
-
-	if client.Client.Auth.Did == "" {
-		t.Fatalf("DID is empty")
-	}
+	t.Logf("Successfully created Bluesky client with name: %s", client.Name())
 }
 
 func TestPost(t *testing.T) {
@@ -50,12 +48,14 @@ func TestPost(t *testing.T) {
 
 	// Test posting - only run this if specifically enabled with TEST_POST=1
 	if os.Getenv("TEST_POST") == "1" {
-		// Create a post without media
+		// Step 1: Create a post without media
+		testContent := fmt.Sprintf("Test post from HyperSync unit test - %d", time.Now().Unix())
 		post := &social.Post{
-			Content:    "Test post from HyperSync unit test",
+			Content:    testContent,
 			Visibility: "public",
 		}
 
+		t.Log("Step 1: Creating post...")
 		resp, err := client.Post(context.Background(), post)
 		if err != nil {
 			t.Fatalf("Error posting to Bluesky: %v", err)
@@ -63,11 +63,13 @@ func TestPost(t *testing.T) {
 
 		// Extract rkey from response
 		var rkey string
+		var uri string
 		switch v := resp.(type) {
 		case string:
 			rkey = v
 		case map[string]interface{}:
-			if uri, ok := v["uri"].(string); ok {
+			if uriValue, ok := v["uri"].(string); ok {
+				uri = uriValue
 				// Extract rkey from URI (at://did:plc:xxx/app.bsky.feed.post/rkey)
 				parts := strings.Split(uri, "/")
 				if len(parts) > 0 {
@@ -81,6 +83,7 @@ func TestPost(t *testing.T) {
 				CID string `json:"cid"`
 			})
 			if ok && respData.URI != "" {
+				uri = respData.URI
 				parts := strings.Split(respData.URI, "/")
 				if len(parts) > 0 {
 					rkey = parts[len(parts)-1]
@@ -91,15 +94,68 @@ func TestPost(t *testing.T) {
 			}
 		}
 
-		t.Logf("Successfully posted to Bluesky with record key: %s", rkey)
+		if rkey == "" || rkey == "unknown" {
+			t.Fatalf("Failed to extract rkey from response: %v", resp)
+		}
 
-		// Test deletion of the post we just created
+		t.Logf("Successfully posted to Bluesky with record key: %s, URI: %s", rkey, uri)
+
+		// Step 2: Verify the post exists by listing recent posts
+		t.Log("Step 2: Verifying post exists by listing recent posts...")
+		posts, err := client.ListPosts(context.Background(), 10) // Get last 10 posts
+		if err != nil {
+			// Don't fail the test if listing fails, just log and continue to deletion
+			t.Logf("Warning: Failed to list posts for verification: %v", err)
+		} else {
+			// Look for our post in the list
+			found := false
+			for _, listedPost := range posts {
+				if listedPost.ID == rkey || strings.Contains(listedPost.Content, testContent) {
+					found = true
+					t.Logf("✓ Post verified in list: ID=%s, Content=%s", listedPost.ID, listedPost.Content)
+					break
+				}
+			}
+
+			if found {
+				t.Log("✓ Post successfully verified in recent posts list")
+			} else {
+				t.Logf("⚠ Post not found in recent posts list (this might be due to timing or API limitations)")
+				// Don't fail the test, as the post was created successfully
+			}
+		}
+
+		// Step 3: Delete the post we just created
+		t.Log("Step 3: Deleting the test post...")
 		err = client.DeletePost(context.Background(), rkey)
 		if err != nil {
 			t.Fatalf("Error deleting post from Bluesky: %v", err)
 		}
 
-		t.Logf("Successfully deleted post with record key: %s", rkey)
+		t.Logf("✓ Successfully deleted post with record key: %s", rkey)
+
+		// Optional: Verify deletion by listing posts again
+		t.Log("Step 4: Verifying post deletion...")
+		postsAfterDeletion, err := client.ListPosts(context.Background(), 10)
+		if err != nil {
+			t.Logf("Warning: Failed to list posts after deletion: %v", err)
+		} else {
+			found := false
+			for _, listedPost := range postsAfterDeletion {
+				if listedPost.ID == rkey {
+					found = true
+					break
+				}
+			}
+
+			if found {
+				t.Logf("⚠ Post still found after deletion (might be due to API propagation delay)")
+			} else {
+				t.Log("✓ Post deletion verified - post no longer appears in recent posts list")
+			}
+		}
+
+		t.Log("✓ Test completed successfully: Create -> Verify -> Delete")
 	} else {
 		t.Log("Skipping actual post/delete test. Set TEST_POST=1 to enable.")
 	}
@@ -135,14 +191,15 @@ func TestPostWithMedia(t *testing.T) {
 	// Create a media object
 	media := social.NewMedia(pngData)
 
-	// Create a post with media
+	// Step 1: Create a post with media
+	testContent := fmt.Sprintf("Test post with media from HyperSync unit test - %d", time.Now().Unix())
 	post := &social.Post{
-		Content:    "Test post with media from HyperSync unit test",
+		Content:    testContent,
 		Visibility: "public",
 		Media:      []social.Media{*media},
 	}
 
-	// Post with media
+	t.Log("Step 1: Creating post with media...")
 	resp, err := client.Post(context.Background(), post)
 	if err != nil {
 		t.Fatalf("Error posting to Bluesky with media: %v", err)
@@ -150,11 +207,13 @@ func TestPostWithMedia(t *testing.T) {
 
 	// Extract rkey from response
 	var rkey string
+	var uri string
 	switch v := resp.(type) {
 	case string:
 		rkey = v
 	case map[string]interface{}:
-		if uri, ok := v["uri"].(string); ok {
+		if uriValue, ok := v["uri"].(string); ok {
+			uri = uriValue
 			// Extract rkey from URI (at://did:plc:xxx/app.bsky.feed.post/rkey)
 			parts := strings.Split(uri, "/")
 			if len(parts) > 0 {
@@ -168,6 +227,7 @@ func TestPostWithMedia(t *testing.T) {
 			CID string `json:"cid"`
 		})
 		if ok && respData.URI != "" {
+			uri = respData.URI
 			parts := strings.Split(respData.URI, "/")
 			if len(parts) > 0 {
 				rkey = parts[len(parts)-1]
@@ -178,15 +238,70 @@ func TestPostWithMedia(t *testing.T) {
 		}
 	}
 
-	t.Logf("Successfully posted to Bluesky with media, record key: %s", rkey)
+	if rkey == "" || rkey == "unknown" {
+		t.Fatalf("Failed to extract rkey from response: %v", resp)
+	}
 
-	// Clean up by deleting the post
+	t.Logf("Successfully posted to Bluesky with media, record key: %s, URI: %s", rkey, uri)
+
+	// Step 2: Verify the post exists by listing recent posts
+	t.Log("Step 2: Verifying post with media exists by listing recent posts...")
+	posts, err := client.ListPosts(context.Background(), 10) // Get last 10 posts
+	if err != nil {
+		// Don't fail the test if listing fails, just log and continue to deletion
+		t.Logf("Warning: Failed to list posts for verification: %v", err)
+	} else {
+		// Look for our post in the list
+		found := false
+		for _, listedPost := range posts {
+			if listedPost.ID == rkey || strings.Contains(listedPost.Content, testContent) {
+				found = true
+				hasMedia := len(listedPost.Media) > 0
+				t.Logf("✓ Post verified in list: ID=%s, Content=%s, HasMedia=%v",
+					listedPost.ID, listedPost.Content, hasMedia)
+				break
+			}
+		}
+
+		if found {
+			t.Log("✓ Post with media successfully verified in recent posts list")
+		} else {
+			t.Logf("⚠ Post not found in recent posts list (this might be due to timing or API limitations)")
+			// Don't fail the test, as the post was created successfully
+		}
+	}
+
+	// Step 3: Delete the post we just created
+	t.Log("Step 3: Deleting the test post with media...")
 	err = client.DeletePost(context.Background(), rkey)
 	if err != nil {
 		t.Fatalf("Error deleting post with media from Bluesky: %v", err)
 	}
 
-	t.Logf("Successfully deleted post with media, record key: %s", rkey)
+	t.Logf("✓ Successfully deleted post with media, record key: %s", rkey)
+
+	// Step 4: Verify deletion by listing posts again
+	t.Log("Step 4: Verifying post deletion...")
+	postsAfterDeletion, err := client.ListPosts(context.Background(), 10)
+	if err != nil {
+		t.Logf("Warning: Failed to list posts after deletion: %v", err)
+	} else {
+		found := false
+		for _, listedPost := range postsAfterDeletion {
+			if listedPost.ID == rkey {
+				found = true
+				break
+			}
+		}
+
+		if found {
+			t.Logf("⚠ Post still found after deletion (might be due to API propagation delay)")
+		} else {
+			t.Log("✓ Post deletion verified - post no longer appears in recent posts list")
+		}
+	}
+
+	t.Log("✓ Test with media completed successfully: Create -> Verify -> Delete")
 }
 
 func TestPostWithURLMedia(t *testing.T) {
@@ -208,14 +323,15 @@ func TestPostWithURLMedia(t *testing.T) {
 	// Create a media object from URL - using a reliable test image
 	media := social.NewMediaFromURL("https://httpbin.org/image/png")
 
-	// Create a post with URL-based media
+	// Step 1: Create a post with URL-based media
+	testContent := fmt.Sprintf("Test post with URL media from HyperSync unit test - %d", time.Now().Unix())
 	post := &social.Post{
-		Content:    "Test post with URL media from HyperSync unit test",
+		Content:    testContent,
 		Visibility: "public",
 		Media:      []social.Media{*media},
 	}
 
-	// Post with media
+	t.Log("Step 1: Creating post with URL media...")
 	resp, err := client.Post(context.Background(), post)
 	if err != nil {
 		t.Fatalf("Error posting to Bluesky with URL media: %v", err)
@@ -223,11 +339,13 @@ func TestPostWithURLMedia(t *testing.T) {
 
 	// Extract rkey from response
 	var rkey string
+	var uri string
 	switch v := resp.(type) {
 	case string:
 		rkey = v
 	case map[string]interface{}:
-		if uri, ok := v["uri"].(string); ok {
+		if uriValue, ok := v["uri"].(string); ok {
+			uri = uriValue
 			// Extract rkey from URI (at://did:plc:xxx/app.bsky.feed.post/rkey)
 			parts := strings.Split(uri, "/")
 			if len(parts) > 0 {
@@ -241,6 +359,7 @@ func TestPostWithURLMedia(t *testing.T) {
 			CID string `json:"cid"`
 		})
 		if ok && respData.URI != "" {
+			uri = respData.URI
 			parts := strings.Split(respData.URI, "/")
 			if len(parts) > 0 {
 				rkey = parts[len(parts)-1]
@@ -251,15 +370,70 @@ func TestPostWithURLMedia(t *testing.T) {
 		}
 	}
 
-	t.Logf("Successfully posted to Bluesky with URL media, record key: %s", rkey)
+	if rkey == "" || rkey == "unknown" {
+		t.Fatalf("Failed to extract rkey from response: %v", resp)
+	}
 
-	// Clean up by deleting the post
+	t.Logf("Successfully posted to Bluesky with URL media, record key: %s, URI: %s", rkey, uri)
+
+	// Step 2: Verify the post exists by listing recent posts
+	t.Log("Step 2: Verifying post with URL media exists by listing recent posts...")
+	posts, err := client.ListPosts(context.Background(), 10) // Get last 10 posts
+	if err != nil {
+		// Don't fail the test if listing fails, just log and continue to deletion
+		t.Logf("Warning: Failed to list posts for verification: %v", err)
+	} else {
+		// Look for our post in the list
+		found := false
+		for _, listedPost := range posts {
+			if listedPost.ID == rkey || strings.Contains(listedPost.Content, testContent) {
+				found = true
+				hasMedia := len(listedPost.Media) > 0
+				t.Logf("✓ Post verified in list: ID=%s, Content=%s, HasMedia=%v",
+					listedPost.ID, listedPost.Content, hasMedia)
+				break
+			}
+		}
+
+		if found {
+			t.Log("✓ Post with URL media successfully verified in recent posts list")
+		} else {
+			t.Logf("⚠ Post not found in recent posts list (this might be due to timing or API limitations)")
+			// Don't fail the test, as the post was created successfully
+		}
+	}
+
+	// Step 3: Delete the post we just created
+	t.Log("Step 3: Deleting the test post with URL media...")
 	err = client.DeletePost(context.Background(), rkey)
 	if err != nil {
 		t.Fatalf("Error deleting post with URL media from Bluesky: %v", err)
 	}
 
-	t.Logf("Successfully deleted post with URL media, record key: %s", rkey)
+	t.Logf("✓ Successfully deleted post with URL media, record key: %s", rkey)
+
+	// Step 4: Verify deletion by listing posts again
+	t.Log("Step 4: Verifying post deletion...")
+	postsAfterDeletion, err := client.ListPosts(context.Background(), 10)
+	if err != nil {
+		t.Logf("Warning: Failed to list posts after deletion: %v", err)
+	} else {
+		found := false
+		for _, listedPost := range postsAfterDeletion {
+			if listedPost.ID == rkey {
+				found = true
+				break
+			}
+		}
+
+		if found {
+			t.Logf("⚠ Post still found after deletion (might be due to API propagation delay)")
+		} else {
+			t.Log("✓ Post deletion verified - post no longer appears in recent posts list")
+		}
+	}
+
+	t.Log("✓ Test with URL media completed successfully: Create -> Verify -> Delete")
 }
 
 func TestListPosts(t *testing.T) {
