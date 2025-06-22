@@ -34,9 +34,7 @@ func NewSyncService(dao dao.PostDao) (*SyncService, error) {
 	for _, config := range socialConfig {
 		if config.Main {
 			mainSocial = config.Name
-		}
-		if config.SyncEnabled && !config.Main {
-			syncSocials = append(syncSocials, config.Name)
+			syncSocials = append(syncSocials, config.SyncTo...)
 		}
 	}
 
