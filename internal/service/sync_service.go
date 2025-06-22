@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"butterfly.orx.me/core/log"
 	"go.orx.me/apps/hyper-sync/internal/conf"
@@ -55,6 +56,11 @@ func (s *SyncService) Sync(ctx context.Context) error {
 
 	for _, post := range posts {
 		logger.Info("Syncing post", "post", post)
+
+		if post.CreatedAt.Before(time.Now().Add(-1 * time.Hour)) {
+			logger.Info("Post is too old", "post", post)
+			continue
+		}
 
 		postModel, err := s.postDao.GetBySocialAndSocialID(ctx, s.mainSocail, post.ID)
 		if err != nil {
