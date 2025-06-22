@@ -2,17 +2,18 @@ package social
 
 // PlatformConfig 包含社交平台的基础配置
 type PlatformConfig struct {
-	Name              string          `yaml:"name"`                // 平台名称
-	Type              string          `yaml:"type"`                // 平台类型 (mastodon, bluesky)
-	Main              bool            `yaml:"main"`                // 是否为主平台
-	Enabled           bool            `yaml:"enabled"`             // 是否启用
-	SyncEnabled       bool            `yaml:"sync_enabled"`        // 是否启用同步功能
-	SyncTo            []string        `yaml:"sync_to"`             // 同步到哪些平台
-	SyncFromPlatforms []string        `yaml:"sync_from_platforms"` // 允许从哪些平台同步内容
-	SyncCategories    []string        `yaml:"sync_categories"`     // 要同步的内容类别
-	Mastodon          *MastodonConfig `yaml:"mastodon,omitempty"`  // Mastodon 特定配置
-	Bluesky           *BlueskyConfig  `yaml:"bluesky,omitempty"`   // Bluesky 特定配置
-	Memos             *MemosConfig    `yaml:"memos,omitempty"`     // Memos 特定配置
+	Name string `yaml:"name"` // 平台名称
+	Type string `yaml:"type"` // 平台类型 (mastodon, bluesky, memos)
+	// Main              bool            `yaml:"main"`                // 是否为主平台
+	Enabled           bool     `yaml:"enabled"`             // 是否启用
+	SyncEnabled       bool     `yaml:"sync_enabled"`        // 是否启用同步功能
+	SyncTo            []string `yaml:"sync_to"`             // 同步到哪些平台
+	SyncFromPlatforms []string `yaml:"sync_from_platforms"` // 允许从哪些平台同步内容
+	SyncCategories    []string `yaml:"sync_categories"`     // 要同步的内容类别
+
+	Mastodon *MastodonConfig `yaml:"mastodon,omitempty"` // Mastodon 特定配置
+	Bluesky  *BlueskyConfig  `yaml:"bluesky,omitempty"`  // Bluesky 特定配置
+	Memos    *MemosConfig    `yaml:"memos,omitempty"`    // Memos 特定配置
 }
 
 type MemosConfig struct {

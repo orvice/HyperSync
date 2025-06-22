@@ -8,6 +8,7 @@ RUN go build -o bin/hyper-sync ./cmd/main.go
 
 
 FROM ghcr.io/orvice/go-runtime:master
+LABEL org.opencontainers.image.description="Hyper Sync"
 WORKDIR /app
 COPY --from=builder /app/bin/hyper-sync /app/bin/hyper-sync
 ENTRYPOINT ["/app/bin/hyper-sync"]

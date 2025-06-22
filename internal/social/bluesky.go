@@ -1,8 +1,12 @@
 package social
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"image"
+	"image/jpeg"
+	"image/png"
 	"os"
 	"strings"
 
@@ -14,6 +18,124 @@ import (
 type BlueskyClient struct {
 	name   string
 	client *botsky.Client
+}
+
+// 定义 Bluesky 的文件大小限制（976KB）
+const BlueskyMaxFileSize = 976 * 1024 // 976KB in bytes
+
+// resizeImageIfNeeded 如果图片超过Bluesky限制则调整大小
+func resizeImageIfNeeded(data []byte, maxSize int) ([]byte, error) {
+	if len(data) <= maxSize {
+		return data, nil // 文件已经在限制内
+	}
+
+	// 检测图片格式
+	contentType := detectImageFormat(data)
+	if contentType == "" {
+		return nil, fmt.Errorf("unsupported image format")
+	}
+
+	// 解码图片
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode image: %w", err)
+	}
+
+	// 计算缩放比例（基于文件大小比例）
+	ratio := float64(maxSize) / float64(len(data))
+	if ratio >= 1.0 {
+		return data, nil // 不需要缩放
+	}
+
+	// 根据比例计算新的尺寸（稍微保守一点，使用 0.8 的系数）
+	scaleFactor := ratio * 0.8
+	bounds := img.Bounds()
+	newWidth := int(float64(bounds.Dx()) * scaleFactor)
+	newHeight := int(float64(bounds.Dy()) * scaleFactor)
+
+	// 确保最小尺寸
+	if newWidth < 100 {
+		newWidth = 100
+	}
+	if newHeight < 100 {
+		newHeight = 100
+	}
+
+	// 创建新的缩放图片
+	resized := image.NewRGBA(image.Rect(0, 0, newWidth, newHeight))
+
+	// 简单的最近邻缩放算法
+	for y := 0; y < newHeight; y++ {
+		for x := 0; x < newWidth; x++ {
+			// 映射到原图坐标
+			srcX := int(float64(x) * float64(bounds.Dx()) / float64(newWidth))
+			srcY := int(float64(y) * float64(bounds.Dy()) / float64(newHeight))
+
+			// 确保坐标在范围内
+			if srcX >= bounds.Dx() {
+				srcX = bounds.Dx() - 1
+			}
+			if srcY >= bounds.Dy() {
+				srcY = bounds.Dy() - 1
+			}
+
+			resized.Set(x, y, img.At(bounds.Min.X+srcX, bounds.Min.Y+srcY))
+		}
+	}
+
+	// 编码新图片
+	var buf bytes.Buffer
+	var quality int = 85 // JPEG 质量
+
+	switch contentType {
+	case "image/jpeg":
+		err = jpeg.Encode(&buf, resized, &jpeg.Options{Quality: quality})
+	case "image/png":
+		err = png.Encode(&buf, resized)
+	default:
+		// 默认使用 JPEG
+		err = jpeg.Encode(&buf, resized, &jpeg.Options{Quality: quality})
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode resized image: %w", err)
+	}
+
+	result := buf.Bytes()
+
+	// 如果仍然太大，降低JPEG质量重试
+	if len(result) > maxSize && contentType == "image/jpeg" {
+		for quality > 20 && len(result) > maxSize {
+			quality -= 10
+			buf.Reset()
+			err = jpeg.Encode(&buf, resized, &jpeg.Options{Quality: quality})
+			if err != nil {
+				return nil, fmt.Errorf("failed to encode resized image with quality %d: %w", quality, err)
+			}
+			result = buf.Bytes()
+		}
+	}
+
+	return result, nil
+}
+
+// detectImageFormat 检测图片格式
+func detectImageFormat(data []byte) string {
+	if len(data) < 8 {
+		return ""
+	}
+
+	// JPEG
+	if bytes.HasPrefix(data, []byte{0xFF, 0xD8, 0xFF}) {
+		return "image/jpeg"
+	}
+
+	// PNG
+	if bytes.HasPrefix(data, []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}) {
+		return "image/png"
+	}
+
+	return ""
 }
 
 // NewBlueskyClient 创建一个新的Bluesky客户端
@@ -90,6 +212,33 @@ func (b *BlueskyClient) Post(ctx context.Context, post *Post) (interface{}, erro
 				return nil, fmt.Errorf("failed to get media data for attachment %d: %w", i, err)
 			}
 
+			logger.Info("processing media attachment",
+				"index", i,
+				"original_size", len(mediaData),
+				"max_allowed_size", BlueskyMaxFileSize)
+
+			// 检查并调整图片大小如果超过Bluesky限制
+			processedData, err := resizeImageIfNeeded(mediaData, BlueskyMaxFileSize)
+			if err != nil {
+				logger.Error("failed to resize image",
+					"index", i,
+					"error", err)
+				return nil, fmt.Errorf("failed to resize image for attachment %d: %w", i, err)
+			}
+
+			// 记录处理结果
+			if len(processedData) != len(mediaData) {
+				logger.Info("image resized to fit Bluesky limits",
+					"index", i,
+					"original_size", len(mediaData),
+					"new_size", len(processedData),
+					"reduction_percent", (1.0-float64(len(processedData))/float64(len(mediaData)))*100)
+			} else {
+				logger.Info("image size within limits, no resizing needed",
+					"index", i,
+					"size", len(mediaData))
+			}
+
 			// 创建临时文件来存储媒体数据，因为 botsky 需要文件路径或URL
 			tmpFile, err := os.CreateTemp("", fmt.Sprintf("hypersync_media_%d_*.jpg", i))
 			if err != nil {
@@ -99,8 +248,8 @@ func (b *BlueskyClient) Post(ctx context.Context, post *Post) (interface{}, erro
 				return nil, fmt.Errorf("failed to create temp file for media %d: %w", i, err)
 			}
 
-			// 写入媒体数据
-			_, err = tmpFile.Write(mediaData)
+			// 写入处理后的媒体数据
+			_, err = tmpFile.Write(processedData)
 			tmpFile.Close()
 			if err != nil {
 				os.Remove(tmpFile.Name())
