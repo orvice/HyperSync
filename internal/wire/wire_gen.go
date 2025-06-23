@@ -20,7 +20,9 @@ func NewSyncService(mainSocail string, socials []string) (*service.SyncService, 
 	if err != nil {
 		return nil, err
 	}
-	syncService, err := service.NewSyncService(postDao, socialService, mainSocail, socials)
+	redisClient := dao.NewRedisClient()
+	redislockClient := dao.NewLocker(redisClient)
+	syncService, err := service.NewSyncService(postDao, socialService, redislockClient, mainSocail, socials)
 	if err != nil {
 		return nil, err
 	}

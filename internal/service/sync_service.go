@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"butterfly.orx.me/core/log"
+	"github.com/bsm/redislock"
 	"go.opentelemetry.io/otel/trace"
 	"go.orx.me/apps/hyper-sync/internal/dao"
 	"go.orx.me/apps/hyper-sync/internal/metrics"
@@ -13,6 +14,8 @@ import (
 )
 
 type SyncService struct {
+	locker *redislock.Client
+
 	socialService *SocialService
 	postDao       dao.PostDao
 	metrics       *metrics.SyncMetrics
@@ -22,9 +25,11 @@ type SyncService struct {
 	socials    []string
 }
 
-func NewSyncService(dao dao.PostDao, socialService *SocialService, mainSocail string, socials []string) (*SyncService, error) {
+func NewSyncService(dao dao.PostDao, socialService *SocialService, locker *redislock.Client,
+	mainSocail string, socials []string) (*SyncService, error) {
 
 	return &SyncService{
+		locker:        locker,
 		mainSocail:    mainSocail,
 		socialService: socialService,
 		postDao:       dao,
@@ -35,6 +40,14 @@ func NewSyncService(dao dao.PostDao, socialService *SocialService, mainSocail st
 }
 
 func (s *SyncService) Sync(ctx context.Context) error {
+	logger := log.FromContext(ctx)
+	lock, err := s.locker.Obtain(ctx, "sync", 10*time.Second, nil)
+	if err != nil {
+		logger.Info("Failed to obtain lock, skip sync", "error", err)
+		return nil
+	}
+	defer lock.Release(ctx)
+
 	// Start the main sync operation span
 	ctx, span := s.tracer.StartSyncOperation(ctx)
 	defer span.End()
