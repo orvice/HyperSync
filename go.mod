@@ -5,11 +5,13 @@ go 1.24.1
 require (
 	butterfly.orx.me/core v0.0.0-20250621160607-8cd37657d336
 	connectrpc.com/connect v1.18.1
+	github.com/bsm/redislock v0.9.4
 	github.com/davhofer/botsky v0.0.0-20250218025645-d30f6a2851dd
 	github.com/gin-gonic/gin v1.10.0
 	github.com/google/wire v0.6.0
 	github.com/mattn/go-mastodon v0.0.9
 	github.com/prometheus/client_golang v1.20.4
+	github.com/redis/go-redis/v9 v9.6.1
 	github.com/stretchr/testify v1.10.0
 	github.com/twitchtv/twirp v8.1.3+incompatible
 	go.mongodb.org/mongo-driver/v2 v2.0.0
@@ -96,7 +98,6 @@ require (
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.59.1 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
-	github.com/redis/go-redis/v9 v9.6.1 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/tomnomnom/linkheader v0.0.0-20180905144013-02ca5825eb80 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect

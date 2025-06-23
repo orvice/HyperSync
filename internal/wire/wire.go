@@ -15,5 +15,7 @@ func NewSyncService(mainSocail string, socials []string) (*service.SyncService, 
 		dao.NewMongoDAO,
 		service.NewSocialService,
 		service.NewSyncService,
+		dao.NewLocker,
+		dao.NewRedisClient,
 	))
 }
