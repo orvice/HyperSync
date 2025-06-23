@@ -213,6 +213,17 @@ func InitSocialPlatforms(configs map[string]*PlatformConfig) ([]*SocialPlatform,
 				return nil, fmt.Errorf("failed to initialize Bluesky client for %s: %w", name, err)
 			}
 
+		case "twitter":
+			if config.Twitter == nil {
+				return nil, fmt.Errorf("missing Twitter config for %s", name)
+			}
+
+			if config.Twitter.ConsumerKey == "" || config.Twitter.ConsumerSecret == "" || config.Twitter.AccessToken == "" || config.Twitter.AccessSecret == "" {
+				return nil, fmt.Errorf("missing Twitter credentials for %s", name)
+			}
+
+			client = NewTwitterClient(config.Name, config.Twitter)
+
 		default:
 			return nil, fmt.Errorf("unsupported platform type %s for %s", config.Type, name)
 		}

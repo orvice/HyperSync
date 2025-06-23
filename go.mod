@@ -7,6 +7,7 @@ require (
 	connectrpc.com/connect v1.18.1
 	github.com/bsm/redislock v0.9.4
 	github.com/davhofer/botsky v0.0.0-20250218025645-d30f6a2851dd
+	github.com/g8rswimmer/go-twitter/v2 v2.1.5
 	github.com/gin-gonic/gin v1.10.0
 	github.com/google/wire v0.6.0
 	github.com/mattn/go-mastodon v0.0.9
