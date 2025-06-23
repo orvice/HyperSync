@@ -41,7 +41,7 @@ func NewSyncService(dao dao.PostDao, socialService *SocialService, locker *redis
 
 func (s *SyncService) Sync(ctx context.Context) error {
 	logger := log.FromContext(ctx)
-	lock, err := s.locker.Obtain(ctx, "sync", 10*time.Second, nil)
+	lock, err := s.locker.Obtain(ctx, "sync", 10*time.Minute, nil)
 	if err != nil {
 		logger.Info("Failed to obtain lock, skip sync", "error", err)
 		return nil
