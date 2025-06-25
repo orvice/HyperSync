@@ -1,6 +1,7 @@
 package social
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,10 +10,26 @@ import (
 	"time"
 )
 
+// ConfigDao 定义配置数据访问接口，只处理 access token
+type ConfigDao interface {
+	GetAccessToken(ctx context.Context, platform string) (string, error)
+	SaveAccessToken(ctx context.Context, platform, accessToken string, expiresAt *time.Time) error
+}
+
+// ThreadsConfig represents Threads configuration
+type ThreadsConfig struct {
+	ClientID     string     `json:"client_id"`
+	ClientSecret string     `json:"client_secret"`
+	AccessToken  string     `json:"access_token"`
+	TokenType    string     `json:"token_type,omitempty"`
+	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+}
+
 type ThreadsClient struct {
 	ClientID     string
 	ClientSecret string
 	AccessToken  string
+	configDao    ConfigDao
 }
 
 // TokenResponse 表示 Threads API token 响应
@@ -28,6 +45,66 @@ func NewThreadsClient(clientID, clientSecret, accessToken string) (*ThreadsClien
 		ClientSecret: clientSecret,
 		AccessToken:  accessToken,
 	}, nil
+}
+
+// NewThreadsClientWithDao creates a new ThreadsClient with dao support
+// clientID 和 clientSecret 通过参数传入，只有 accessToken 从 dao 获取
+func NewThreadsClientWithDao(clientID, clientSecret string, configDao ConfigDao) (*ThreadsClient, error) {
+	client := &ThreadsClient{
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		configDao:    configDao,
+	}
+
+	// Load access token from dao
+	err := client.LoadAccessTokenFromDao(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to load access token from dao: %w", err)
+	}
+
+	return client, nil
+}
+
+// LoadAccessTokenFromDao loads access token from database
+func (c *ThreadsClient) LoadAccessTokenFromDao(ctx context.Context) error {
+	if c.configDao == nil {
+		return fmt.Errorf("config dao is not set")
+	}
+
+	accessToken, err := c.configDao.GetAccessToken(ctx, "threads")
+	if err != nil {
+		return fmt.Errorf("failed to get access token: %w", err)
+	}
+
+	if accessToken == "" {
+		return fmt.Errorf("access token not found in database")
+	}
+
+	c.AccessToken = accessToken
+	return nil
+}
+
+// SaveTokenToDao saves the updated access token to database
+func (c *ThreadsClient) SaveTokenToDao(ctx context.Context, tokenResp *TokenResponse) error {
+	if c.configDao == nil {
+		return fmt.Errorf("config dao is not set")
+	}
+
+	var expiresAt *time.Time
+	if tokenResp.ExpiresIn > 0 {
+		expTime := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+		expiresAt = &expTime
+	}
+
+	err := c.configDao.SaveAccessToken(ctx, "threads", tokenResp.AccessToken, expiresAt)
+	if err != nil {
+		return fmt.Errorf("failed to save access token to dao: %w", err)
+	}
+
+	// Update client's access token
+	c.AccessToken = tokenResp.AccessToken
+
+	return nil
 }
 
 // ExchangeForLongLivedToken 将短期访问令牌交换为长期访问令牌
