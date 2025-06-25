@@ -40,7 +40,10 @@ func main() {
 	}
 
 	// 4. 创建 Threads 客户端（会自动从数据库加载 access token）
-	threadsClient, err := social.NewThreadsClientWithDao(clientID, clientSecret, tokenDao)
+	// 如果数据库中没有 token，可以从环境变量提供初始 token
+	initialAccessToken := os.Getenv("THREADS_ACCESS_TOKEN") // 可选，用于首次初始化
+
+	threadsClient, err := social.NewThreadsClientWithDao("threads", clientID, clientSecret, initialAccessToken, tokenDao)
 	if err != nil {
 		log.Fatal("Failed to create Threads client:", err)
 	}
@@ -131,9 +134,11 @@ func main() {
 //    export THREADS_CLIENT_ID="your_client_id"
 //    export THREADS_CLIENT_SECRET="your_client_secret"
 //    export THREADS_USER_ID="your_user_id"
+//    export THREADS_ACCESS_TOKEN="your_initial_token"  # 首次初始化时需要
 //    export MONGO_URI="mongodb://localhost:27017"  # 可选
 //
-// 2. 确保数据库中已有有效的 threads access token
+// 2. 首次运行时，程序会自动将 THREADS_ACCESS_TOKEN 保存到数据库
+//    后续运行时会自动使用数据库中的 token（可能已自动刷新）
 //
 // 3. 运行程序:
 //    go run examples/threads_post_with_token_refresh.go

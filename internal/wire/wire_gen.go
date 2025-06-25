@@ -15,7 +15,7 @@ import (
 
 func NewSyncService(mainSocail string, socials []string) (*service.SyncService, error) {
 	client := dao.NewMongoClient()
-	postDao := dao.NewMongoDAO(client)
+	postDao := dao.NewPostDao(client)
 	socialService, err := service.NewSocialService()
 	if err != nil {
 		return nil, err
@@ -27,4 +27,10 @@ func NewSyncService(mainSocail string, socials []string) (*service.SyncService, 
 		return nil, err
 	}
 	return syncService, nil
+}
+
+func NewMongoDAO() *dao.MongoDAO {
+	client := dao.NewMongoClient()
+	mongoDAO := dao.NewMongoDAO(client)
+	return mongoDAO
 }

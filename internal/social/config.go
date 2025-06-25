@@ -14,6 +14,7 @@ type PlatformConfig struct {
 	Mastodon *MastodonConfig `yaml:"mastodon,omitempty"` // Mastodon 特定配置
 	Bluesky  *BlueskyConfig  `yaml:"bluesky,omitempty"`  // Bluesky 特定配置
 	Memos    *MemosConfig    `yaml:"memos,omitempty"`    // Memos 特定配置
+	Threads  *ThreadsConfig  `yaml:"threads,omitempty"`  // Threads 特定配置
 }
 
 type MemosConfig struct {

@@ -82,6 +82,11 @@ func (m *Media) GetData() ([]byte, error) {
 	return nil, fmt.Errorf("media has no data and no URL")
 }
 
+// GetURL returns the media URL if available
+func (m *Media) GetURL() string {
+	return m.url
+}
+
 // ShouldSyncPost determines if a post should be synced from source to target platform
 // based on the provided configuration
 func ShouldSyncPost(sourcePlatform string, targetPlatformConfig map[string]interface{}) bool {
@@ -211,6 +216,15 @@ func InitSocialPlatforms(configs map[string]*PlatformConfig) ([]*SocialPlatform,
 			client, err = NewBlueskyClient(config.Bluesky.Host, config.Bluesky.Handle, config.Bluesky.Password, config.Name)
 			if err != nil {
 				return nil, fmt.Errorf("failed to initialize Bluesky client for %s: %w", name, err)
+			}
+
+		case "threads":
+			if config.Threads == nil {
+				return nil, fmt.Errorf("missing Threads config for %s", name)
+			}
+			client, err = NewThreadsClientWithDao(config.Name, config.Threads.ClientID, config.Threads.ClientSecret, config.Threads.AccessToken, nil)
+			if err != nil {
+				return nil, fmt.Errorf("failed to initialize Threads client for %s: %w", name, err)
 			}
 
 		default:

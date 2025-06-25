@@ -12,10 +12,17 @@ import (
 func NewSyncService(mainSocail string, socials []string) (*service.SyncService, error) {
 	panic(wire.Build(
 		dao.NewMongoClient,
-		dao.NewMongoDAO,
+		dao.NewPostDao,
 		service.NewSocialService,
 		service.NewSyncService,
 		dao.NewLocker,
 		dao.NewRedisClient,
+	))
+}
+
+func NewMongoDAO() *dao.MongoDAO {
+	panic(wire.Build(
+		dao.NewMongoClient,
+		dao.NewMongoDAO,
 	))
 }

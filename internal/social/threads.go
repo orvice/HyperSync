@@ -25,14 +25,13 @@ type ConfigDao interface {
 
 // ThreadsConfig represents Threads configuration
 type ThreadsConfig struct {
-	ClientID     string     `json:"client_id"`
-	ClientSecret string     `json:"client_secret"`
-	AccessToken  string     `json:"access_token"`
-	TokenType    string     `json:"token_type,omitempty"`
-	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+	ClientID     string `yaml:"client_id"`
+	ClientSecret string `yaml:"client_secret"`
+	AccessToken  string `yaml:"access_token"`
 }
 
 type ThreadsClient struct {
+	name         string
 	ClientID     string
 	ClientSecret string
 	AccessToken  string
@@ -51,19 +50,14 @@ type TokenResponse struct {
 	ExpiresIn   int64  `json:"expires_in"` // 秒数，直到令牌过期
 }
 
-func NewThreadsClient(clientID, clientSecret, accessToken string) (*ThreadsClient, error) {
-	return &ThreadsClient{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		AccessToken:  accessToken,
-	}, nil
-}
-
 // NewThreadsClientWithDao creates a new ThreadsClient with dao support
 // 当 dao 里不存在 access token 时，将传入的 accessToken 写入 dao
 // 当 dao 里有 access token 时，使用 dao 里的，方便第一次初始化
-func NewThreadsClientWithDao(clientID, clientSecret, accessToken string, configDao ConfigDao) (*ThreadsClient, error) {
+func NewThreadsClientWithDao(name string,
+	clientID, clientSecret, accessToken string, configDao ConfigDao) (*ThreadsClient, error) {
+
 	client := &ThreadsClient{
+		name:         name,
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		configDao:    configDao,
@@ -183,7 +177,7 @@ func (c *ThreadsClient) ExchangeForLongLivedToken(shortLivedToken string) (*Toke
 	}
 
 	// 构建请求URL
-	baseURL := "https://graph.threads.net/access_token"
+	baseURL := "https://graph.threads.net/v1.0/access_token"
 	params := url.Values{}
 	params.Add("grant_type", "th_exchange_token")
 	params.Add("client_secret", c.ClientSecret)
@@ -230,7 +224,7 @@ func (c *ThreadsClient) RefreshLongLivedToken() (*TokenResponse, error) {
 	}
 
 	// 构建请求URL
-	baseURL := "https://graph.threads.net/refresh_access_token"
+	baseURL := "https://graph.threads.net/v1.0/refresh_access_token"
 	params := url.Values{}
 	params.Add("grant_type", "th_refresh_token")
 	params.Add("access_token", c.AccessToken)
@@ -540,4 +534,75 @@ func (c *ThreadsClient) PostCarousel(ctx context.Context, userID string, items [
 
 	// Step 3: Publish the carousel
 	return c.PublishMediaContainer(ctx, userID, carouselContainer.ID)
+}
+
+// =============================================================================
+// SocialClient Interface Implementation
+// =============================================================================
+
+// Name returns the name of this social client (implements SocialClient interface)
+func (c *ThreadsClient) Name() string {
+	return c.name
+}
+
+// Post implements the SocialClient interface for posting content
+func (c *ThreadsClient) Post(ctx context.Context, post *Post) (interface{}, error) {
+	// For now, we'll need a userID. This should be configured or obtained from the API
+	// TODO: Add userID to ThreadsClient configuration or get it from user profile API
+	userID := "me" // This is a placeholder - Threads API typically needs the actual user ID
+
+	// Determine post type based on media content
+	mediaCount := len(post.Media)
+
+	switch {
+	case mediaCount == 0:
+		// Text-only post
+		return c.PostText(ctx, userID, post.Content)
+
+	case mediaCount == 1:
+		// Single media post
+		media := post.Media[0]
+		mediaURL := media.GetURL()
+
+		if mediaURL == "" {
+			return nil, fmt.Errorf("media URL is required for Threads posting")
+		}
+
+		// For now, assume it's an image. TODO: Add media type detection based on URL or content type
+		return c.PostImage(ctx, userID, mediaURL, post.Content)
+
+	case mediaCount > 1:
+		// Carousel post
+		if mediaCount > 20 {
+			return nil, fmt.Errorf("too many media items for carousel: %d (max 20)", mediaCount)
+		}
+
+		var carouselItems []CarouselItem
+		for _, media := range post.Media {
+			mediaURL := media.GetURL()
+			if mediaURL == "" {
+				return nil, fmt.Errorf("media URL is required for carousel items")
+			}
+
+			// For now, assume all are images. TODO: Add proper media type detection
+			carouselItems = append(carouselItems, CarouselItem{
+				MediaType: "IMAGE",
+				ImageURL:  mediaURL,
+			})
+		}
+
+		return c.PostCarousel(ctx, userID, carouselItems, post.Content)
+
+	default:
+		return nil, fmt.Errorf("invalid media count: %d", mediaCount)
+	}
+}
+
+// ListPosts implements the SocialClient interface for retrieving posts
+func (c *ThreadsClient) ListPosts(ctx context.Context, limit int) ([]*Post, error) {
+	// TODO: Implement when Threads API provides user posts endpoint
+	// Currently, Threads API doesn't have a public endpoint to list user's own posts
+	// This would require the user's posts endpoint once it becomes available
+
+	return nil, fmt.Errorf("ListPosts is not yet implemented for Threads - API endpoint not available")
 }
