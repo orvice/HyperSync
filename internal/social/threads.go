@@ -217,3 +217,245 @@ func (tr *TokenResponse) ShouldRefreshToken() bool {
 	// 检查是否在7天内过期
 	return tr.IsTokenExpiringSoon(7 * 24 * time.Hour)
 }
+
+// PostRequest represents a post creation request
+type PostRequest struct {
+	MediaType      string   `json:"media_type"`                 // TEXT, IMAGE, VIDEO, CAROUSEL
+	Text           string   `json:"text,omitempty"`             // Post text content
+	ImageURL       string   `json:"image_url,omitempty"`        // For images
+	VideoURL       string   `json:"video_url,omitempty"`        // For videos
+	LinkAttachment string   `json:"link_attachment,omitempty"`  // For text posts only
+	IsCarouselItem bool     `json:"is_carousel_item,omitempty"` // For carousel items
+	Children       []string `json:"children,omitempty"`         // For carousel containers
+}
+
+// MediaContainerResponse represents the response when creating a media container
+type MediaContainerResponse struct {
+	ID string `json:"id"`
+}
+
+// PublishResponse represents the response when publishing a post
+type PublishResponse struct {
+	ID string `json:"id"`
+}
+
+// CreateMediaContainer creates a media container for a post
+// This is step 1 of the posting process
+func (c *ThreadsClient) CreateMediaContainer(ctx context.Context, userID string, req *PostRequest) (*MediaContainerResponse, error) {
+	if c.AccessToken == "" {
+		return nil, fmt.Errorf("access token is required")
+	}
+
+	// 构建请求URL
+	baseURL := fmt.Sprintf("https://graph.threads.net/v1.0/%s/threads", userID)
+
+	// 构建请求参数
+	params := url.Values{}
+	params.Add("access_token", c.AccessToken)
+	params.Add("media_type", req.MediaType)
+
+	if req.Text != "" {
+		params.Add("text", req.Text)
+	}
+
+	if req.ImageURL != "" {
+		params.Add("image_url", req.ImageURL)
+	}
+
+	if req.VideoURL != "" {
+		params.Add("video_url", req.VideoURL)
+	}
+
+	if req.LinkAttachment != "" {
+		params.Add("link_attachment", req.LinkAttachment)
+	}
+
+	if req.IsCarouselItem {
+		params.Add("is_carousel_item", "true")
+	}
+
+	if len(req.Children) > 0 {
+		// For carousel containers
+		children := ""
+		for i, child := range req.Children {
+			if i > 0 {
+				children += ","
+			}
+			children += child
+		}
+		params.Add("children", children)
+	}
+
+	// 发送POST请求
+	resp, err := http.PostForm(baseURL, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create media container: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// 读取响应
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// 检查HTTP状态码
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("create media container failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// 解析JSON响应
+	var containerResp MediaContainerResponse
+	if err := json.Unmarshal(body, &containerResp); err != nil {
+		return nil, fmt.Errorf("failed to parse container response: %w", err)
+	}
+
+	return &containerResp, nil
+}
+
+// PublishMediaContainer publishes a media container
+// This is step 2 of the posting process
+func (c *ThreadsClient) PublishMediaContainer(ctx context.Context, userID, containerID string) (*PublishResponse, error) {
+	if c.AccessToken == "" {
+		return nil, fmt.Errorf("access token is required")
+	}
+
+	// 构建请求URL
+	baseURL := fmt.Sprintf("https://graph.threads.net/v1.0/%s/threads_publish", userID)
+
+	// 构建请求参数
+	params := url.Values{}
+	params.Add("access_token", c.AccessToken)
+	params.Add("creation_id", containerID)
+
+	// 发送POST请求
+	resp, err := http.PostForm(baseURL, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to publish media container: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// 读取响应
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// 检查HTTP状态码
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("publish media container failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// 解析JSON响应
+	var publishResp PublishResponse
+	if err := json.Unmarshal(body, &publishResp); err != nil {
+		return nil, fmt.Errorf("failed to parse publish response: %w", err)
+	}
+
+	return &publishResp, nil
+}
+
+// PostText creates and publishes a text-only post
+func (c *ThreadsClient) PostText(ctx context.Context, userID, text string, linkAttachment ...string) (*PublishResponse, error) {
+	req := &PostRequest{
+		MediaType: "TEXT",
+		Text:      text,
+	}
+
+	if len(linkAttachment) > 0 && linkAttachment[0] != "" {
+		req.LinkAttachment = linkAttachment[0]
+	}
+
+	// Step 1: Create media container
+	container, err := c.CreateMediaContainer(ctx, userID, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create text post container: %w", err)
+	}
+
+	// Step 2: Publish the container (recommended to wait 30 seconds, but we'll proceed immediately for now)
+	return c.PublishMediaContainer(ctx, userID, container.ID)
+}
+
+// PostImage creates and publishes an image post
+func (c *ThreadsClient) PostImage(ctx context.Context, userID, imageURL, text string) (*PublishResponse, error) {
+	req := &PostRequest{
+		MediaType: "IMAGE",
+		ImageURL:  imageURL,
+		Text:      text,
+	}
+
+	// Step 1: Create media container
+	container, err := c.CreateMediaContainer(ctx, userID, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create image post container: %w", err)
+	}
+
+	// Step 2: Publish the container
+	return c.PublishMediaContainer(ctx, userID, container.ID)
+}
+
+// PostVideo creates and publishes a video post
+func (c *ThreadsClient) PostVideo(ctx context.Context, userID, videoURL, text string) (*PublishResponse, error) {
+	req := &PostRequest{
+		MediaType: "VIDEO",
+		VideoURL:  videoURL,
+		Text:      text,
+	}
+
+	// Step 1: Create media container
+	container, err := c.CreateMediaContainer(ctx, userID, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create video post container: %w", err)
+	}
+
+	// Step 2: Publish the container
+	return c.PublishMediaContainer(ctx, userID, container.ID)
+}
+
+// CarouselItem represents an item in a carousel
+type CarouselItem struct {
+	MediaType string `json:"media_type"` // IMAGE or VIDEO
+	ImageURL  string `json:"image_url,omitempty"`
+	VideoURL  string `json:"video_url,omitempty"`
+}
+
+// PostCarousel creates and publishes a carousel post
+func (c *ThreadsClient) PostCarousel(ctx context.Context, userID string, items []CarouselItem, text string) (*PublishResponse, error) {
+	if len(items) < 2 || len(items) > 20 {
+		return nil, fmt.Errorf("carousel must have between 2 and 20 items, got %d", len(items))
+	}
+
+	var itemContainerIDs []string
+
+	// Step 1: Create item containers for each carousel item
+	for _, item := range items {
+		req := &PostRequest{
+			MediaType:      item.MediaType,
+			ImageURL:       item.ImageURL,
+			VideoURL:       item.VideoURL,
+			IsCarouselItem: true,
+		}
+
+		container, err := c.CreateMediaContainer(ctx, userID, req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create carousel item container: %w", err)
+		}
+
+		itemContainerIDs = append(itemContainerIDs, container.ID)
+	}
+
+	// Step 2: Create carousel container
+	carouselReq := &PostRequest{
+		MediaType: "CAROUSEL",
+		Text:      text,
+		Children:  itemContainerIDs,
+	}
+
+	carouselContainer, err := c.CreateMediaContainer(ctx, userID, carouselReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create carousel container: %w", err)
+	}
+
+	// Step 3: Publish the carousel
+	return c.PublishMediaContainer(ctx, userID, carouselContainer.ID)
+}
