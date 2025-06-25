@@ -60,40 +60,42 @@ func NewThreadsClient(clientID, clientSecret, accessToken string) (*ThreadsClien
 }
 
 // NewThreadsClientWithDao creates a new ThreadsClient with dao support
-// clientID 和 clientSecret 通过参数传入，只有 accessToken 从 dao 获取
-func NewThreadsClientWithDao(clientID, clientSecret string, configDao ConfigDao) (*ThreadsClient, error) {
+// 当 dao 里不存在 access token 时，将传入的 accessToken 写入 dao
+// 当 dao 里有 access token 时，使用 dao 里的，方便第一次初始化
+func NewThreadsClientWithDao(clientID, clientSecret, accessToken string, configDao ConfigDao) (*ThreadsClient, error) {
 	client := &ThreadsClient{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		configDao:    configDao,
 	}
 
-	// Load access token from dao
-	err := client.LoadAccessTokenFromDao(context.Background())
+	ctx := context.Background()
+
+	// 尝试从 dao 加载 access token
+	existingToken, err := configDao.GetAccessToken(ctx, "threads")
 	if err != nil {
-		return nil, fmt.Errorf("failed to load access token from dao: %w", err)
+		return nil, fmt.Errorf("failed to get access token from dao: %w", err)
+	}
+
+	if existingToken == "" {
+		// dao 中没有 access token，使用传入的 accessToken 并保存到 dao
+		if accessToken == "" {
+			return nil, fmt.Errorf("no access token found in dao and no access token provided")
+		}
+
+		// 保存到 dao（不设置过期时间，因为这是初始化时的 token）
+		err = configDao.SaveAccessToken(ctx, "threads", accessToken, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to save access token to dao: %w", err)
+		}
+
+		client.AccessToken = accessToken
+	} else {
+		// dao 中有 access token，使用 dao 中的
+		client.AccessToken = existingToken
 	}
 
 	return client, nil
-}
-
-// LoadAccessTokenFromDao loads access token from database
-func (c *ThreadsClient) LoadAccessTokenFromDao(ctx context.Context) error {
-	if c.configDao == nil {
-		return fmt.Errorf("config dao is not set")
-	}
-
-	accessToken, err := c.configDao.GetAccessToken(ctx, "threads")
-	if err != nil {
-		return fmt.Errorf("failed to get access token: %w", err)
-	}
-
-	if accessToken == "" {
-		return fmt.Errorf("access token not found in database")
-	}
-
-	c.AccessToken = accessToken
-	return nil
 }
 
 // EnsureValidToken 确保 token 有效，如果快过期则自动刷新
