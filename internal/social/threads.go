@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"butterfly.orx.me/core/log"
 )
 
 // TokenInfo 包含 token 和过期时间信息
@@ -59,6 +61,8 @@ type TokenResponse struct {
 func NewThreadsClientWithDao(name string,
 	clientID, clientSecret, accessToken string, userID int64, configDao ConfigDao) (*ThreadsClient, error) {
 
+	logger := log.FromContext(context.Background())
+
 	client := &ThreadsClient{
 		name:         name,
 		ClientID:     clientID,
@@ -72,6 +76,7 @@ func NewThreadsClientWithDao(name string,
 	// 尝试从 dao 加载 access token
 	existingToken, err := configDao.GetAccessToken(ctx, "threads")
 	if err != nil {
+		logger.Error("failed to get access token from dao", "error", err)
 		return nil, fmt.Errorf("failed to get access token from dao: %w", err)
 	}
 
@@ -98,25 +103,34 @@ func NewThreadsClientWithDao(name string,
 
 // EnsureValidToken 确保 token 有效，如果快过期则自动刷新
 func (c *ThreadsClient) EnsureValidToken(ctx context.Context) error {
+	logger := log.FromContext(ctx)
+
 	if c.configDao == nil {
+		logger.Error("config dao is not set")
 		return fmt.Errorf("config dao is not set")
 	}
+
+	logger.Debug("checking token validity", "client", c.name)
 
 	// 获取 token 信息（包含过期时间）
 	tokenInfo, err := c.configDao.GetTokenInfo(ctx, "threads")
 	if err != nil {
+		logger.Error("failed to get token info from dao", "error", err)
 		return fmt.Errorf("failed to get token info: %w", err)
 	}
 
 	if tokenInfo == nil || tokenInfo.AccessToken == "" {
+		logger.Error("access token not found in database")
 		return fmt.Errorf("access token not found in database")
 	}
 
 	// 更新客户端的 access token
 	c.AccessToken = tokenInfo.AccessToken
+	logger.Debug("loaded access token from dao", "client", c.name)
 
 	// 如果没有过期时间信息，无法判断是否需要刷新，直接使用现有 token
 	if tokenInfo.ExpiresAt == nil {
+		logger.Info("no expiration time found for token, using existing token", "client", c.name)
 		return nil
 	}
 
@@ -126,25 +140,40 @@ func (c *ThreadsClient) EnsureValidToken(ctx context.Context) error {
 
 	if timeUntilExpiry <= refreshThreshold {
 		// Token 即将过期，尝试刷新
-		fmt.Printf("Token expires in %v, attempting to refresh...\n", timeUntilExpiry)
+		logger.Info("token expires soon, attempting to refresh",
+			"client", c.name,
+			"time_until_expiry", timeUntilExpiry,
+			"expires_at", tokenInfo.ExpiresAt.Format(time.RFC3339))
 
 		tokenResp, err := c.RefreshLongLivedToken()
 		if err != nil {
 			// 刷新失败，但如果 token 还没完全过期，仍可使用
 			if timeUntilExpiry > 0 {
-				fmt.Printf("Token refresh failed but token is still valid for %v: %v\n", timeUntilExpiry, err)
+				logger.Warn("token refresh failed but token is still valid",
+					"client", c.name,
+					"time_until_expiry", timeUntilExpiry,
+					"error", err)
 				return nil
 			}
+			logger.Error("token expired and refresh failed", "client", c.name, "error", err)
 			return fmt.Errorf("token expired and refresh failed: %w", err)
 		}
 
 		// 保存新的 token 到数据库
 		err = c.SaveTokenToDao(ctx, tokenResp)
 		if err != nil {
+			logger.Error("failed to save refreshed token", "client", c.name, "error", err)
 			return fmt.Errorf("failed to save refreshed token: %w", err)
 		}
 
-		fmt.Printf("Token successfully refreshed, new expiry: %v\n", tokenResp.GetTokenExpirationTime())
+		logger.Info("token successfully refreshed",
+			"client", c.name,
+			"new_expiry", tokenResp.GetTokenExpirationTime().Format(time.RFC3339))
+	} else {
+		logger.Debug("token is still valid",
+			"client", c.name,
+			"time_until_expiry", timeUntilExpiry,
+			"expires_at", tokenInfo.ExpiresAt.Format(time.RFC3339))
 	}
 
 	return nil
@@ -152,7 +181,10 @@ func (c *ThreadsClient) EnsureValidToken(ctx context.Context) error {
 
 // SaveTokenToDao saves the updated access token to database
 func (c *ThreadsClient) SaveTokenToDao(ctx context.Context, tokenResp *TokenResponse) error {
+	logger := log.FromContext(ctx)
+
 	if c.configDao == nil {
+		logger.Error("config dao is not set")
 		return fmt.Errorf("config dao is not set")
 	}
 
@@ -162,13 +194,25 @@ func (c *ThreadsClient) SaveTokenToDao(ctx context.Context, tokenResp *TokenResp
 		expiresAt = &expTime
 	}
 
+	logger.Debug("saving access token to dao",
+		"client", c.name,
+		"expires_at", func() string {
+			if expiresAt != nil {
+				return expiresAt.Format(time.RFC3339)
+			}
+			return "never"
+		}())
+
 	err := c.configDao.SaveAccessToken(ctx, "threads", tokenResp.AccessToken, expiresAt)
 	if err != nil {
+		logger.Error("failed to save access token to dao", "client", c.name, "error", err)
 		return fmt.Errorf("failed to save access token to dao: %w", err)
 	}
 
 	// Update client's access token
 	c.AccessToken = tokenResp.AccessToken
+
+	logger.Info("access token saved successfully", "client", c.name)
 
 	return nil
 }
@@ -176,9 +220,14 @@ func (c *ThreadsClient) SaveTokenToDao(ctx context.Context, tokenResp *TokenResp
 // ExchangeForLongLivedToken 将短期访问令牌交换为长期访问令牌
 // 长期令牌有效期为60天，可以刷新
 func (c *ThreadsClient) ExchangeForLongLivedToken(shortLivedToken string) (*TokenResponse, error) {
+	logger := log.FromContext(context.Background())
+
 	if c.ClientSecret == "" {
+		logger.Error("client secret is required for token exchange", "client", c.name)
 		return nil, fmt.Errorf("client secret is required for token exchange")
 	}
+
+	logger.Info("exchanging short-lived token for long-lived token", "client", c.name)
 
 	// 构建请求URL
 	baseURL := "https://graph.threads.net/v1.0/access_token"
@@ -192,6 +241,7 @@ func (c *ThreadsClient) ExchangeForLongLivedToken(shortLivedToken string) (*Toke
 	// 发送GET请求
 	resp, err := http.Get(requestURL)
 	if err != nil {
+		logger.Error("failed to send token exchange request", "client", c.name, "error", err)
 		return nil, fmt.Errorf("failed to exchange token: %w", err)
 	}
 	defer resp.Body.Close()
@@ -199,22 +249,32 @@ func (c *ThreadsClient) ExchangeForLongLivedToken(shortLivedToken string) (*Toke
 	// 读取响应
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		logger.Error("failed to read token exchange response body", "client", c.name, "error", err)
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
 	// 检查HTTP状态码
 	if resp.StatusCode != http.StatusOK {
+		logger.Error("token exchange failed",
+			"client", c.name,
+			"status_code", resp.StatusCode,
+			"response", string(body))
 		return nil, fmt.Errorf("token exchange failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// 解析JSON响应
 	var tokenResp TokenResponse
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		logger.Error("failed to parse token exchange response", "client", c.name, "error", err)
 		return nil, fmt.Errorf("failed to parse token response: %w", err)
 	}
 
 	// 更新客户端的访问令牌
 	c.AccessToken = tokenResp.AccessToken
+
+	logger.Info("successfully exchanged token",
+		"client", c.name,
+		"expires_in_seconds", tokenResp.ExpiresIn)
 
 	return &tokenResp, nil
 }
@@ -223,9 +283,14 @@ func (c *ThreadsClient) ExchangeForLongLivedToken(shortLivedToken string) (*Toke
 // 长期令牌必须至少24小时旧但尚未过期才能刷新
 // 刷新后的令牌有效期为60天
 func (c *ThreadsClient) RefreshLongLivedToken() (*TokenResponse, error) {
+	logger := log.FromContext(context.Background())
+
 	if c.AccessToken == "" {
+		logger.Error("access token is required for token refresh", "client", c.name)
 		return nil, fmt.Errorf("access token is required for token refresh")
 	}
+
+	logger.Info("refreshing long-lived token", "client", c.name)
 
 	// 构建请求URL
 	baseURL := "https://graph.threads.net/v1.0/refresh_access_token"
@@ -238,6 +303,7 @@ func (c *ThreadsClient) RefreshLongLivedToken() (*TokenResponse, error) {
 	// 发送GET请求
 	resp, err := http.Get(requestURL)
 	if err != nil {
+		logger.Error("failed to send token refresh request", "client", c.name, "error", err)
 		return nil, fmt.Errorf("failed to refresh token: %w", err)
 	}
 	defer resp.Body.Close()
@@ -245,22 +311,32 @@ func (c *ThreadsClient) RefreshLongLivedToken() (*TokenResponse, error) {
 	// 读取响应
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		logger.Error("failed to read token refresh response body", "client", c.name, "error", err)
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
 	// 检查HTTP状态码
 	if resp.StatusCode != http.StatusOK {
+		logger.Error("token refresh failed",
+			"client", c.name,
+			"status_code", resp.StatusCode,
+			"response", string(body))
 		return nil, fmt.Errorf("token refresh failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// 解析JSON响应
 	var tokenResp TokenResponse
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		logger.Error("failed to parse token refresh response", "client", c.name, "error", err)
 		return nil, fmt.Errorf("failed to parse token response: %w", err)
 	}
 
 	// 更新客户端的访问令牌
 	c.AccessToken = tokenResp.AccessToken
+
+	logger.Info("successfully refreshed token",
+		"client", c.name,
+		"expires_in_seconds", tokenResp.ExpiresIn)
 
 	return &tokenResp, nil
 }
@@ -308,16 +384,29 @@ type PublishResponse struct {
 // CreateMediaContainer creates a media container for a post
 // This is step 1 of the posting process
 func (c *ThreadsClient) CreateMediaContainer(ctx context.Context, userID string, req *PostRequest) (*MediaContainerResponse, error) {
+	logger := log.FromContext(ctx)
+
 	// 确保 token 有效（自动刷新如果需要）
 	if c.configDao != nil {
 		if err := c.EnsureValidToken(ctx); err != nil {
+			logger.Error("failed to ensure valid token", "client", c.name, "error", err)
 			return nil, fmt.Errorf("failed to ensure valid token: %w", err)
 		}
 	}
 
 	if c.AccessToken == "" {
+		logger.Error("access token is required", "client", c.name)
 		return nil, fmt.Errorf("access token is required")
 	}
+
+	logger.Info("creating media container",
+		"client", c.name,
+		"user_id", userID,
+		"media_type", req.MediaType,
+		"has_text", req.Text != "",
+		"has_image", req.ImageURL != "",
+		"has_video", req.VideoURL != "",
+		"is_carousel_item", req.IsCarouselItem)
 
 	// 构建请求URL
 	baseURL := fmt.Sprintf("https://graph.threads.net/v1.0/%s/threads", userID)
@@ -357,11 +446,15 @@ func (c *ThreadsClient) CreateMediaContainer(ctx context.Context, userID string,
 			children += child
 		}
 		params.Add("children", children)
+		logger.Debug("carousel container with children",
+			"client", c.name,
+			"children_count", len(req.Children))
 	}
 
 	// 发送POST请求
 	resp, err := http.PostForm(baseURL, params)
 	if err != nil {
+		logger.Error("failed to send create media container request", "client", c.name, "error", err)
 		return nil, fmt.Errorf("failed to create media container: %w", err)
 	}
 	defer resp.Body.Close()
@@ -369,19 +462,29 @@ func (c *ThreadsClient) CreateMediaContainer(ctx context.Context, userID string,
 	// 读取响应
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		logger.Error("failed to read create media container response", "client", c.name, "error", err)
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
 	// 检查HTTP状态码
 	if resp.StatusCode != http.StatusOK {
+		logger.Error("create media container failed",
+			"client", c.name,
+			"status_code", resp.StatusCode,
+			"response", string(body))
 		return nil, fmt.Errorf("create media container failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// 解析JSON响应
 	var containerResp MediaContainerResponse
 	if err := json.Unmarshal(body, &containerResp); err != nil {
+		logger.Error("failed to parse media container response", "client", c.name, "error", err)
 		return nil, fmt.Errorf("failed to parse container response: %w", err)
 	}
+
+	logger.Info("media container created successfully",
+		"client", c.name,
+		"container_id", containerResp.ID)
 
 	return &containerResp, nil
 }
@@ -389,16 +492,25 @@ func (c *ThreadsClient) CreateMediaContainer(ctx context.Context, userID string,
 // PublishMediaContainer publishes a media container
 // This is step 2 of the posting process
 func (c *ThreadsClient) PublishMediaContainer(ctx context.Context, userID, containerID string) (*PublishResponse, error) {
+	logger := log.FromContext(ctx)
+
 	// 确保 token 有效（自动刷新如果需要）
 	if c.configDao != nil {
 		if err := c.EnsureValidToken(ctx); err != nil {
+			logger.Error("failed to ensure valid token", "client", c.name, "error", err)
 			return nil, fmt.Errorf("failed to ensure valid token: %w", err)
 		}
 	}
 
 	if c.AccessToken == "" {
+		logger.Error("access token is required", "client", c.name)
 		return nil, fmt.Errorf("access token is required")
 	}
+
+	logger.Info("publishing media container",
+		"client", c.name,
+		"user_id", userID,
+		"container_id", containerID)
 
 	// 构建请求URL
 	baseURL := fmt.Sprintf("https://graph.threads.net/v1.0/%s/threads_publish", userID)
@@ -411,6 +523,7 @@ func (c *ThreadsClient) PublishMediaContainer(ctx context.Context, userID, conta
 	// 发送POST请求
 	resp, err := http.PostForm(baseURL, params)
 	if err != nil {
+		logger.Error("failed to send publish media container request", "client", c.name, "error", err)
 		return nil, fmt.Errorf("failed to publish media container: %w", err)
 	}
 	defer resp.Body.Close()
@@ -418,25 +531,43 @@ func (c *ThreadsClient) PublishMediaContainer(ctx context.Context, userID, conta
 	// 读取响应
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		logger.Error("failed to read publish response", "client", c.name, "error", err)
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
 	// 检查HTTP状态码
 	if resp.StatusCode != http.StatusOK {
+		logger.Error("publish media container failed",
+			"client", c.name,
+			"status_code", resp.StatusCode,
+			"response", string(body))
 		return nil, fmt.Errorf("publish media container failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// 解析JSON响应
 	var publishResp PublishResponse
 	if err := json.Unmarshal(body, &publishResp); err != nil {
+		logger.Error("failed to parse publish response", "client", c.name, "error", err)
 		return nil, fmt.Errorf("failed to parse publish response: %w", err)
 	}
+
+	logger.Info("media container published successfully",
+		"client", c.name,
+		"post_id", publishResp.ID)
 
 	return &publishResp, nil
 }
 
 // PostText creates and publishes a text-only post
 func (c *ThreadsClient) PostText(ctx context.Context, userID, text string, linkAttachment ...string) (*PublishResponse, error) {
+	logger := log.FromContext(ctx)
+
+	logger.Debug("starting text post",
+		"client", c.name,
+		"user_id", userID,
+		"text_length", len(text),
+		"has_link", len(linkAttachment) > 0 && linkAttachment[0] != "")
+
 	req := &PostRequest{
 		MediaType: "TEXT",
 		Text:      text,
@@ -449,6 +580,7 @@ func (c *ThreadsClient) PostText(ctx context.Context, userID, text string, linkA
 	// Step 1: Create media container
 	container, err := c.CreateMediaContainer(ctx, userID, req)
 	if err != nil {
+		logger.Error("failed to create text post container", "client", c.name, "error", err)
 		return nil, fmt.Errorf("failed to create text post container: %w", err)
 	}
 
@@ -458,6 +590,14 @@ func (c *ThreadsClient) PostText(ctx context.Context, userID, text string, linkA
 
 // PostImage creates and publishes an image post
 func (c *ThreadsClient) PostImage(ctx context.Context, userID, imageURL, text string) (*PublishResponse, error) {
+	logger := log.FromContext(ctx)
+
+	logger.Debug("starting image post",
+		"client", c.name,
+		"user_id", userID,
+		"image_url", imageURL,
+		"text_length", len(text))
+
 	req := &PostRequest{
 		MediaType: "IMAGE",
 		ImageURL:  imageURL,
@@ -467,6 +607,7 @@ func (c *ThreadsClient) PostImage(ctx context.Context, userID, imageURL, text st
 	// Step 1: Create media container
 	container, err := c.CreateMediaContainer(ctx, userID, req)
 	if err != nil {
+		logger.Error("failed to create image post container", "client", c.name, "error", err)
 		return nil, fmt.Errorf("failed to create image post container: %w", err)
 	}
 
@@ -476,6 +617,14 @@ func (c *ThreadsClient) PostImage(ctx context.Context, userID, imageURL, text st
 
 // PostVideo creates and publishes a video post
 func (c *ThreadsClient) PostVideo(ctx context.Context, userID, videoURL, text string) (*PublishResponse, error) {
+	logger := log.FromContext(ctx)
+
+	logger.Debug("starting video post",
+		"client", c.name,
+		"user_id", userID,
+		"video_url", videoURL,
+		"text_length", len(text))
+
 	req := &PostRequest{
 		MediaType: "VIDEO",
 		VideoURL:  videoURL,
@@ -485,6 +634,7 @@ func (c *ThreadsClient) PostVideo(ctx context.Context, userID, videoURL, text st
 	// Step 1: Create media container
 	container, err := c.CreateMediaContainer(ctx, userID, req)
 	if err != nil {
+		logger.Error("failed to create video post container", "client", c.name, "error", err)
 		return nil, fmt.Errorf("failed to create video post container: %w", err)
 	}
 
@@ -501,14 +651,32 @@ type CarouselItem struct {
 
 // PostCarousel creates and publishes a carousel post
 func (c *ThreadsClient) PostCarousel(ctx context.Context, userID string, items []CarouselItem, text string) (*PublishResponse, error) {
+	logger := log.FromContext(ctx)
+
 	if len(items) < 2 || len(items) > 20 {
+		logger.Error("invalid carousel item count",
+			"client", c.name,
+			"item_count", len(items),
+			"min_required", 2,
+			"max_allowed", 20)
 		return nil, fmt.Errorf("carousel must have between 2 and 20 items, got %d", len(items))
 	}
+
+	logger.Debug("starting carousel post",
+		"client", c.name,
+		"user_id", userID,
+		"item_count", len(items),
+		"text_length", len(text))
 
 	var itemContainerIDs []string
 
 	// Step 1: Create item containers for each carousel item
-	for _, item := range items {
+	for i, item := range items {
+		logger.Debug("creating carousel item container",
+			"client", c.name,
+			"item_index", i,
+			"media_type", item.MediaType)
+
 		req := &PostRequest{
 			MediaType:      item.MediaType,
 			ImageURL:       item.ImageURL,
@@ -518,11 +686,19 @@ func (c *ThreadsClient) PostCarousel(ctx context.Context, userID string, items [
 
 		container, err := c.CreateMediaContainer(ctx, userID, req)
 		if err != nil {
+			logger.Error("failed to create carousel item container",
+				"client", c.name,
+				"item_index", i,
+				"error", err)
 			return nil, fmt.Errorf("failed to create carousel item container: %w", err)
 		}
 
 		itemContainerIDs = append(itemContainerIDs, container.ID)
 	}
+
+	logger.Debug("all carousel item containers created, creating main carousel container",
+		"client", c.name,
+		"item_container_count", len(itemContainerIDs))
 
 	// Step 2: Create carousel container
 	carouselReq := &PostRequest{
@@ -533,6 +709,7 @@ func (c *ThreadsClient) PostCarousel(ctx context.Context, userID string, items [
 
 	carouselContainer, err := c.CreateMediaContainer(ctx, userID, carouselReq)
 	if err != nil {
+		logger.Error("failed to create carousel container", "client", c.name, "error", err)
 		return nil, fmt.Errorf("failed to create carousel container: %w", err)
 	}
 
@@ -551,15 +728,29 @@ func (c *ThreadsClient) Name() string {
 
 // Post implements the SocialClient interface for posting content
 func (c *ThreadsClient) Post(ctx context.Context, post *Post) (interface{}, error) {
+	logger := log.FromContext(ctx)
 	userID := strconv.FormatInt(c.UserID, 10)
 
 	// Determine post type based on media content
 	mediaCount := len(post.Media)
 
+	logger.Info("posting to threads",
+		"client", c.name,
+		"user_id", userID,
+		"media_count", mediaCount,
+		"content_length", len(post.Content))
+
 	switch {
 	case mediaCount == 0:
 		// Text-only post
-		return c.PostText(ctx, userID, post.Content)
+		logger.Debug("posting text-only content", "client", c.name)
+		result, err := c.PostText(ctx, userID, post.Content)
+		if err != nil {
+			logger.Error("failed to post text content", "client", c.name, "error", err)
+			return nil, err
+		}
+		logger.Info("text post successful", "client", c.name, "post_id", result.ID)
+		return result, nil
 
 	case mediaCount == 1:
 		// Single media post
@@ -567,22 +758,44 @@ func (c *ThreadsClient) Post(ctx context.Context, post *Post) (interface{}, erro
 		mediaURL := media.GetURL()
 
 		if mediaURL == "" {
+			logger.Error("media URL is required for Threads posting", "client", c.name)
 			return nil, fmt.Errorf("media URL is required for Threads posting")
 		}
 
+		logger.Debug("posting single media content",
+			"client", c.name,
+			"media_url", mediaURL)
+
 		// For now, assume it's an image. TODO: Add media type detection based on URL or content type
-		return c.PostImage(ctx, userID, mediaURL, post.Content)
+		result, err := c.PostImage(ctx, userID, mediaURL, post.Content)
+		if err != nil {
+			logger.Error("failed to post image content", "client", c.name, "error", err)
+			return nil, err
+		}
+		logger.Info("image post successful", "client", c.name, "post_id", result.ID)
+		return result, nil
 
 	case mediaCount > 1:
 		// Carousel post
 		if mediaCount > 20 {
+			logger.Error("too many media items for carousel",
+				"client", c.name,
+				"media_count", mediaCount,
+				"max_allowed", 20)
 			return nil, fmt.Errorf("too many media items for carousel: %d (max 20)", mediaCount)
 		}
 
+		logger.Debug("posting carousel content",
+			"client", c.name,
+			"media_count", mediaCount)
+
 		var carouselItems []CarouselItem
-		for _, media := range post.Media {
+		for i, media := range post.Media {
 			mediaURL := media.GetURL()
 			if mediaURL == "" {
+				logger.Error("media URL is required for carousel items",
+					"client", c.name,
+					"item_index", i)
 				return nil, fmt.Errorf("media URL is required for carousel items")
 			}
 
@@ -593,18 +806,31 @@ func (c *ThreadsClient) Post(ctx context.Context, post *Post) (interface{}, erro
 			})
 		}
 
-		return c.PostCarousel(ctx, userID, carouselItems, post.Content)
+		result, err := c.PostCarousel(ctx, userID, carouselItems, post.Content)
+		if err != nil {
+			logger.Error("failed to post carousel content", "client", c.name, "error", err)
+			return nil, err
+		}
+		logger.Info("carousel post successful", "client", c.name, "post_id", result.ID)
+		return result, nil
 
 	default:
+		logger.Error("invalid media count", "client", c.name, "media_count", mediaCount)
 		return nil, fmt.Errorf("invalid media count: %d", mediaCount)
 	}
 }
 
 // ListPosts implements the SocialClient interface for retrieving posts
 func (c *ThreadsClient) ListPosts(ctx context.Context, limit int) ([]*Post, error) {
+	logger := log.FromContext(ctx)
+
 	// TODO: Implement when Threads API provides user posts endpoint
 	// Currently, Threads API doesn't have a public endpoint to list user's own posts
 	// This would require the user's posts endpoint once it becomes available
+
+	logger.Warn("ListPosts is not yet implemented for Threads",
+		"client", c.name,
+		"reason", "API endpoint not available")
 
 	return nil, fmt.Errorf("ListPosts is not yet implemented for Threads - API endpoint not available")
 }
