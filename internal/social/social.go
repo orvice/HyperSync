@@ -222,7 +222,8 @@ func InitSocialPlatforms(configs map[string]*PlatformConfig) ([]*SocialPlatform,
 			if config.Threads == nil {
 				return nil, fmt.Errorf("missing Threads config for %s", name)
 			}
-			client, err = NewThreadsClientWithDao(config.Name, config.Threads.ClientID, config.Threads.ClientSecret, config.Threads.AccessToken, nil)
+			client, err = NewThreadsClientWithDao(config.Name, config.Threads.ClientID, config.Threads.ClientSecret, config.Threads.AccessToken,
+				config.Threads.UserID, nil)
 			if err != nil {
 				return nil, fmt.Errorf("failed to initialize Threads client for %s: %w", name, err)
 			}

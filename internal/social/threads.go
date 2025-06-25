@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -28,6 +29,7 @@ type ThreadsConfig struct {
 	ClientID     string `yaml:"client_id"`
 	ClientSecret string `yaml:"client_secret"`
 	AccessToken  string `yaml:"access_token"`
+	UserID       int64  `yaml:"user_id"`
 }
 
 type ThreadsClient struct {
@@ -35,6 +37,7 @@ type ThreadsClient struct {
 	ClientID     string
 	ClientSecret string
 	AccessToken  string
+	UserID       int64
 	configDao    ConfigDao
 }
 
@@ -54,12 +57,13 @@ type TokenResponse struct {
 // 当 dao 里不存在 access token 时，将传入的 accessToken 写入 dao
 // 当 dao 里有 access token 时，使用 dao 里的，方便第一次初始化
 func NewThreadsClientWithDao(name string,
-	clientID, clientSecret, accessToken string, configDao ConfigDao) (*ThreadsClient, error) {
+	clientID, clientSecret, accessToken string, userID int64, configDao ConfigDao) (*ThreadsClient, error) {
 
 	client := &ThreadsClient{
 		name:         name,
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
+		UserID:       userID,
 		configDao:    configDao,
 	}
 
@@ -547,9 +551,7 @@ func (c *ThreadsClient) Name() string {
 
 // Post implements the SocialClient interface for posting content
 func (c *ThreadsClient) Post(ctx context.Context, post *Post) (interface{}, error) {
-	// For now, we'll need a userID. This should be configured or obtained from the API
-	// TODO: Add userID to ThreadsClient configuration or get it from user profile API
-	userID := "me" // This is a placeholder - Threads API typically needs the actual user ID
+	userID := strconv.FormatInt(c.UserID, 10)
 
 	// Determine post type based on media content
 	mediaCount := len(post.Media)
