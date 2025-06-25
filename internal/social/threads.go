@@ -10,9 +10,16 @@ import (
 	"time"
 )
 
+// TokenInfo 包含 token 和过期时间信息
+type TokenInfo struct {
+	AccessToken string
+	ExpiresAt   *time.Time
+}
+
 // ConfigDao 定义配置数据访问接口，只处理 access token
 type ConfigDao interface {
 	GetAccessToken(ctx context.Context, platform string) (string, error)
+	GetTokenInfo(ctx context.Context, platform string) (*TokenInfo, error)
 	SaveAccessToken(ctx context.Context, platform, accessToken string, expiresAt *time.Time) error
 }
 
@@ -30,6 +37,11 @@ type ThreadsClient struct {
 	ClientSecret string
 	AccessToken  string
 	configDao    ConfigDao
+}
+
+// SetConfigDao sets the config dao for the client (useful for testing)
+func (c *ThreadsClient) SetConfigDao(dao ConfigDao) {
+	c.configDao = dao
 }
 
 // TokenResponse 表示 Threads API token 响应
@@ -81,6 +93,60 @@ func (c *ThreadsClient) LoadAccessTokenFromDao(ctx context.Context) error {
 	}
 
 	c.AccessToken = accessToken
+	return nil
+}
+
+// EnsureValidToken 确保 token 有效，如果快过期则自动刷新
+func (c *ThreadsClient) EnsureValidToken(ctx context.Context) error {
+	if c.configDao == nil {
+		return fmt.Errorf("config dao is not set")
+	}
+
+	// 获取 token 信息（包含过期时间）
+	tokenInfo, err := c.configDao.GetTokenInfo(ctx, "threads")
+	if err != nil {
+		return fmt.Errorf("failed to get token info: %w", err)
+	}
+
+	if tokenInfo == nil || tokenInfo.AccessToken == "" {
+		return fmt.Errorf("access token not found in database")
+	}
+
+	// 更新客户端的 access token
+	c.AccessToken = tokenInfo.AccessToken
+
+	// 如果没有过期时间信息，无法判断是否需要刷新，直接使用现有 token
+	if tokenInfo.ExpiresAt == nil {
+		return nil
+	}
+
+	// 检查 token 是否在 7 天内过期
+	const refreshThreshold = 7 * 24 * time.Hour
+	timeUntilExpiry := time.Until(*tokenInfo.ExpiresAt)
+
+	if timeUntilExpiry <= refreshThreshold {
+		// Token 即将过期，尝试刷新
+		fmt.Printf("Token expires in %v, attempting to refresh...\n", timeUntilExpiry)
+
+		tokenResp, err := c.RefreshLongLivedToken()
+		if err != nil {
+			// 刷新失败，但如果 token 还没完全过期，仍可使用
+			if timeUntilExpiry > 0 {
+				fmt.Printf("Token refresh failed but token is still valid for %v: %v\n", timeUntilExpiry, err)
+				return nil
+			}
+			return fmt.Errorf("token expired and refresh failed: %w", err)
+		}
+
+		// 保存新的 token 到数据库
+		err = c.SaveTokenToDao(ctx, tokenResp)
+		if err != nil {
+			return fmt.Errorf("failed to save refreshed token: %w", err)
+		}
+
+		fmt.Printf("Token successfully refreshed, new expiry: %v\n", tokenResp.GetTokenExpirationTime())
+	}
+
 	return nil
 }
 
@@ -242,6 +308,13 @@ type PublishResponse struct {
 // CreateMediaContainer creates a media container for a post
 // This is step 1 of the posting process
 func (c *ThreadsClient) CreateMediaContainer(ctx context.Context, userID string, req *PostRequest) (*MediaContainerResponse, error) {
+	// 确保 token 有效（自动刷新如果需要）
+	if c.configDao != nil {
+		if err := c.EnsureValidToken(ctx); err != nil {
+			return nil, fmt.Errorf("failed to ensure valid token: %w", err)
+		}
+	}
+
 	if c.AccessToken == "" {
 		return nil, fmt.Errorf("access token is required")
 	}
@@ -316,6 +389,13 @@ func (c *ThreadsClient) CreateMediaContainer(ctx context.Context, userID string,
 // PublishMediaContainer publishes a media container
 // This is step 2 of the posting process
 func (c *ThreadsClient) PublishMediaContainer(ctx context.Context, userID, containerID string) (*PublishResponse, error) {
+	// 确保 token 有效（自动刷新如果需要）
+	if c.configDao != nil {
+		if err := c.EnsureValidToken(ctx); err != nil {
+			return nil, fmt.Errorf("failed to ensure valid token: %w", err)
+		}
+	}
+
 	if c.AccessToken == "" {
 		return nil, fmt.Errorf("access token is required")
 	}
