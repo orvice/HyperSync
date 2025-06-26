@@ -6,7 +6,6 @@ import (
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
-
 	"go.orx.me/apps/hyper-sync/internal/social"
 )
 
@@ -31,27 +30,14 @@ type SocialConfig struct {
 	AccessToken string `bson:"access_token,omitempty"`
 
 	// Threads specific fields
-	ClientID     string     `bson:"client_id,omitempty"`
-	ClientSecret string     `bson:"client_secret,omitempty"`
-	UserID       int64      `bson:"user_id,omitempty"`
-	ExpiresAt    *time.Time `bson:"expires_at,omitempty"`
-
-	// Other platform fields can be added here as needed
-	Token    string `bson:"token,omitempty"`    // For platforms using "token" instead of "access_token"
-	Instance string `bson:"instance,omitempty"` // For Mastodon
-	Handle   string `bson:"handle,omitempty"`   // For Bluesky
-	Password string `bson:"password,omitempty"` // For Bluesky
-	Endpoint string `bson:"endpoint,omitempty"` // For Memos
+	ExpiresAt *time.Time `bson:"expires_at,omitempty"`
 }
 
 // GetThreadsConfig extracts Threads-specific configuration
 func (m *SocialConfigModel) GetThreadsConfig() *social.ThreadsConfig {
 	config := &social.ThreadsConfig{
-		ClientID:     m.Config.ClientID,
-		ClientSecret: m.Config.ClientSecret,
-		AccessToken:  m.Config.AccessToken,
-		UserID:       m.Config.UserID,
-		ExpiresAt:    m.Config.ExpiresAt,
+		AccessToken: m.Config.AccessToken,
+		ExpiresAt:   m.Config.ExpiresAt,
 	}
 
 	// Return nil if no essential fields are set

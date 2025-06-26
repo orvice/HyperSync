@@ -44,17 +44,8 @@ func (a *ThreadsConfigAdapter) GetTokenInfo(ctx context.Context, platform string
 	}
 
 	// 直接从 SocialConfig 结构体中获取 token 信息
-	var accessToken string
-	var expiresAt *time.Time
-
-	// 优先使用 AccessToken 字段
-	if configModel.Config.AccessToken != "" {
-		accessToken = configModel.Config.AccessToken
-		expiresAt = configModel.Config.ExpiresAt
-	} else if configModel.Config.Token != "" {
-		// 兼容其他平台使用 "token" 字段的情况
-		accessToken = configModel.Config.Token
-	}
+	accessToken := configModel.Config.AccessToken
+	expiresAt := configModel.Config.ExpiresAt
 
 	if accessToken == "" {
 		return nil, nil // No token found
