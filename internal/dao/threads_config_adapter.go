@@ -43,34 +43,27 @@ func (a *ThreadsConfigAdapter) GetTokenInfo(ctx context.Context, platform string
 		return nil, nil // Not found
 	}
 
-	// 统一从 config.{platform} 中获取 token 信息
-	if platformData, ok := configModel.Config[platform].(map[string]interface{}); ok {
-		// 尝试获取 access_token
-		var accessToken string
-		if token, ok := platformData["access_token"].(string); ok {
-			accessToken = token
-		} else if token, ok := platformData["token"].(string); ok {
-			// 兼容其他平台使用 "token" 字段的情况
-			accessToken = token
-		}
+	// 直接从 SocialConfig 结构体中获取 token 信息
+	var accessToken string
+	var expiresAt *time.Time
 
-		if accessToken == "" {
-			return nil, nil // No token found
-		}
-
-		// 尝试获取过期时间
-		var expiresAt *time.Time
-		if expiry, ok := platformData["expires_at"].(time.Time); ok {
-			expiresAt = &expiry
-		}
-
-		return &social.TokenInfo{
-			AccessToken: accessToken,
-			ExpiresAt:   expiresAt,
-		}, nil
+	// 优先使用 AccessToken 字段
+	if configModel.Config.AccessToken != "" {
+		accessToken = configModel.Config.AccessToken
+		expiresAt = configModel.Config.ExpiresAt
+	} else if configModel.Config.Token != "" {
+		// 兼容其他平台使用 "token" 字段的情况
+		accessToken = configModel.Config.Token
 	}
 
-	return nil, nil // No token found for this platform
+	if accessToken == "" {
+		return nil, nil // No token found
+	}
+
+	return &social.TokenInfo{
+		AccessToken: accessToken,
+		ExpiresAt:   expiresAt,
+	}, nil
 }
 
 // SaveAccessToken 保存指定平台的 access token

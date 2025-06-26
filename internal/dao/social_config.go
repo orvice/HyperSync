@@ -21,34 +21,45 @@ type SocialConfigModel struct {
 	UserID   int64         `bson:"user_id"` // Optional: for multi-user support
 
 	// Config stores platform-specific settings
-	Config map[string]interface{} `bson:"config"`
+	Config SocialConfig `bson:"config"`
 
 	CreatedAt time.Time `bson:"created_at"`
 	UpdatedAt time.Time `bson:"updated_at"`
 }
 
+type SocialConfig struct {
+	AccessToken string `bson:"access_token,omitempty"`
+
+	// Threads specific fields
+	ClientID     string     `bson:"client_id,omitempty"`
+	ClientSecret string     `bson:"client_secret,omitempty"`
+	UserID       int64      `bson:"user_id,omitempty"`
+	ExpiresAt    *time.Time `bson:"expires_at,omitempty"`
+
+	// Other platform fields can be added here as needed
+	Token    string `bson:"token,omitempty"`    // For platforms using "token" instead of "access_token"
+	Instance string `bson:"instance,omitempty"` // For Mastodon
+	Handle   string `bson:"handle,omitempty"`   // For Bluesky
+	Password string `bson:"password,omitempty"` // For Bluesky
+	Endpoint string `bson:"endpoint,omitempty"` // For Memos
+}
+
 // GetThreadsConfig extracts Threads-specific configuration
 func (m *SocialConfigModel) GetThreadsConfig() *social.ThreadsConfig {
-	if val, ok := m.Config["threads"]; ok {
-		if threadsMap, ok := val.(map[string]interface{}); ok {
-			config := &social.ThreadsConfig{}
-			if clientID, ok := threadsMap["client_id"].(string); ok {
-				config.ClientID = clientID
-			}
-			if clientSecret, ok := threadsMap["client_secret"].(string); ok {
-				config.ClientSecret = clientSecret
-			}
-			if accessToken, ok := threadsMap["access_token"].(string); ok {
-				config.AccessToken = accessToken
-			}
-
-			if expiresAt, ok := threadsMap["expires_at"].(time.Time); ok {
-				config.ExpiresAt = &expiresAt
-			}
-			return config
-		}
+	config := &social.ThreadsConfig{
+		ClientID:     m.Config.ClientID,
+		ClientSecret: m.Config.ClientSecret,
+		AccessToken:  m.Config.AccessToken,
+		UserID:       m.Config.UserID,
+		ExpiresAt:    m.Config.ExpiresAt,
 	}
-	return nil
+
+	// Return nil if no essential fields are set
+	if config.AccessToken == "" && config.ClientID == "" {
+		return nil
+	}
+
+	return config
 }
 
 // SocialConfigDao defines the interface for social platform configuration data access
@@ -59,8 +70,6 @@ type SocialConfigDao interface {
 
 // Ensure MongoDAO implements SocialConfigDao
 var _ SocialConfigDao = (*MongoDAO)(nil)
-
-// NewSocialConfigDao creates a new SocialConfigDao
 
 // GetConfigByPlatform retrieves a social platform's configuration
 func (d *MongoDAO) GetConfigByPlatform(ctx context.Context, platform string) (*SocialConfigModel, error) {
@@ -84,13 +93,13 @@ func (d *MongoDAO) UpdatePlatformToken(ctx context.Context, platform, accessToke
 	filter := bson.M{"platform": platform}
 	update := bson.M{
 		"$set": bson.M{
-			"config." + platform + ".access_token": accessToken,
-			"updated_at":                           time.Now(),
+			"config.access_token": accessToken,
+			"updated_at":          time.Now(),
 		},
 	}
 
 	if expiresAt != nil {
-		update["$set"].(bson.M)["config."+platform+".expires_at"] = *expiresAt
+		update["$set"].(bson.M)["config.expires_at"] = *expiresAt
 	}
 
 	_, err := collection.UpdateOne(ctx, filter, update)
