@@ -165,7 +165,7 @@ func CrossPost(ctx context.Context, post *Post, platforms []*SocialPlatform) (ma
 }
 
 // InitSocialPlatforms initializes social clients from configuration
-func InitSocialPlatforms(configs map[string]*PlatformConfig) ([]*SocialPlatform, error) {
+func InitSocialPlatforms(configs map[string]*PlatformConfig, threadsDao ConfigDao) ([]*SocialPlatform, error) {
 	var platforms []*SocialPlatform
 
 	for name, config := range configs {
@@ -223,7 +223,7 @@ func InitSocialPlatforms(configs map[string]*PlatformConfig) ([]*SocialPlatform,
 				return nil, fmt.Errorf("missing Threads config for %s", name)
 			}
 			client, err = NewThreadsClientWithDao(config.Name, config.Threads.ClientID, config.Threads.ClientSecret, config.Threads.AccessToken,
-				config.Threads.UserID, nil)
+				config.Threads.UserID, threadsDao)
 			if err != nil {
 				return nil, fmt.Errorf("failed to initialize Threads client for %s: %w", name, err)
 			}

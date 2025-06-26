@@ -13,6 +13,8 @@ func NewSyncService(mainSocail string, socials []string) (*service.SyncService, 
 	panic(wire.Build(
 		dao.NewMongoClient,
 		dao.NewPostDao,
+		dao.NewSocialConfigDao,
+		dao.NewThreadsConfigAdapter,
 		service.NewSocialService,
 		service.NewSyncService,
 		dao.NewLocker,
