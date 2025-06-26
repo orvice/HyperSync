@@ -15,7 +15,6 @@ import (
 
 // ThreadsConfig represents Threads configuration
 
-
 type ThreadsClient struct {
 	name         string
 	ClientID     string
@@ -45,6 +44,9 @@ func NewThreadsClientWithDao(name string,
 
 	logger := log.FromContext(context.Background())
 
+	logger.Info("NewThreadsClientWithDao",
+		"name", name, "clientID", clientID, "userID", userID)
+
 	client := &ThreadsClient{
 		name:         name,
 		ClientID:     clientID,
@@ -56,7 +58,7 @@ func NewThreadsClientWithDao(name string,
 	ctx := context.Background()
 
 	// 尝试从 dao 加载 access token
-	existingToken, err := tokenManager.GetAccessToken(ctx, "threads")
+	existingToken, err := tokenManager.GetAccessToken(ctx, client.name)
 	if err != nil {
 		logger.Error("failed to get access token from dao", "error", err)
 		return nil, fmt.Errorf("failed to get access token from dao: %w", err)
@@ -69,10 +71,12 @@ func NewThreadsClientWithDao(name string,
 		}
 
 		// 保存到 dao（不设置过期时间，因为这是初始化时的 token）
-		err = tokenManager.SaveAccessToken(ctx, "threads", accessToken, nil)
+		err = tokenManager.SaveAccessToken(ctx, client.name, accessToken, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to save access token to dao: %w", err)
 		}
+
+		logger.Info("saved access token to dao,success", "name", client.name)
 
 		client.AccessToken = accessToken
 	} else {
@@ -95,7 +99,7 @@ func (c *ThreadsClient) EnsureValidToken(ctx context.Context) error {
 	logger.Debug("checking token validity", "client", c.name)
 
 	// 获取 token 信息（包含过期时间）
-	tokenInfo, err := c.tokenManager.GetTokenInfo(ctx, "threads")
+	tokenInfo, err := c.tokenManager.GetTokenInfo(ctx, c.name)
 	if err != nil {
 		logger.Error("failed to get token info from dao", "error", err)
 		return fmt.Errorf("failed to get token info: %w", err)
@@ -185,7 +189,7 @@ func (c *ThreadsClient) SaveTokenToDao(ctx context.Context, tokenResp *TokenResp
 			return "never"
 		}())
 
-	err := c.tokenManager.SaveAccessToken(ctx, "threads", tokenResp.AccessToken, expiresAt)
+	err := c.tokenManager.SaveAccessToken(ctx, c.name, tokenResp.AccessToken, expiresAt)
 	if err != nil {
 		logger.Error("failed to save access token to dao", "client", c.name, "error", err)
 		return fmt.Errorf("failed to save access token to dao: %w", err)

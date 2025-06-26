@@ -31,6 +31,20 @@ func NewSyncService(mainSocail string, socials []string) (*service.SyncService, 
 	return syncService, nil
 }
 
+func NewSchedulerService() (*service.SchedulerService, error) {
+	client := dao.NewMongoClient()
+	socialConfigDao := dao.NewSocialConfigDao(client)
+	threadsConfigAdapter := dao.NewThreadsConfigAdapter(socialConfigDao)
+	socialService, err := service.NewSocialService(threadsConfigAdapter)
+	if err != nil {
+		return nil, err
+	}
+	redisClient := dao.NewRedisClient()
+	redislockClient := dao.NewLocker(redisClient)
+	schedulerService := service.NewSchedulerService(socialService, redislockClient, threadsConfigAdapter)
+	return schedulerService, nil
+}
+
 func NewMongoDAO() *dao.MongoDAO {
 	client := dao.NewMongoClient()
 	mongoDAO := dao.NewMongoDAO(client)

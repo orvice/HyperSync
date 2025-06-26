@@ -73,21 +73,48 @@ func (d *MongoDAO) GetConfigByPlatform(ctx context.Context, platform string) (*S
 }
 
 // UpdatePlatformToken updates the access token for a specific platform
+// If the platform config doesn't exist, it creates a new one
 func (d *MongoDAO) UpdatePlatformToken(ctx context.Context, platform, accessToken string, expiresAt *time.Time) error {
 	collection := d.Client.Database(d.Database).Collection(socialConfigCollection)
 
-	filter := bson.M{"platform": platform}
-	update := bson.M{
-		"$set": bson.M{
-			"config.access_token": accessToken,
-			"updated_at":          time.Now(),
-		},
+	// 先尝试获取现有记录
+	existingConfig, err := d.GetConfigByPlatform(ctx, platform)
+	if err != nil {
+		return err
 	}
 
-	if expiresAt != nil {
-		update["$set"].(bson.M)["config.expires_at"] = *expiresAt
-	}
+	now := time.Now()
 
-	_, err := collection.UpdateOne(ctx, filter, update)
-	return err
+	if existingConfig != nil {
+		// 记录存在，执行更新
+		filter := bson.M{"platform": platform}
+		update := bson.M{
+			"$set": bson.M{
+				"config.access_token": accessToken,
+				"updated_at":          now,
+			},
+		}
+
+		if expiresAt != nil {
+			update["$set"].(bson.M)["config.expires_at"] = *expiresAt
+		}
+
+		_, err := collection.UpdateOne(ctx, filter, update)
+		return err
+	} else {
+		// 记录不存在，创建新记录
+		newConfig := &SocialConfigModel{
+			Platform: platform,
+			UserID:   0, // 默认为0，可以根据需要修改
+			Config: SocialConfig{
+				AccessToken: accessToken,
+				ExpiresAt:   expiresAt,
+			},
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+
+		_, err := collection.InsertOne(ctx, newConfig)
+		return err
+	}
 }

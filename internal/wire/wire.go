@@ -24,6 +24,19 @@ func NewSyncService(mainSocail string, socials []string) (*service.SyncService, 
 	))
 }
 
+func NewSchedulerService() (*service.SchedulerService, error) {
+	panic(wire.Build(
+		dao.NewMongoClient,
+		dao.NewSocialConfigDao,
+		dao.NewThreadsConfigAdapter,
+		dao.NewLocker,
+		dao.NewRedisClient,
+		service.NewSocialService,
+		service.NewSchedulerService,
+		wire.Bind(new(social.TokenManager), new(*dao.ThreadsConfigAdapter)),
+	))
+}
+
 func NewMongoDAO() *dao.MongoDAO {
 	panic(wire.Build(
 		dao.NewMongoClient,
