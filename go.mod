@@ -1,6 +1,8 @@
 module go.orx.me/apps/hyper-sync
 
-go 1.24.1
+go 1.23.4
+
+toolchain go1.24.3
 
 require (
 	butterfly.orx.me/core v0.0.0-20250621160607-8cd37657d336

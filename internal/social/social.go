@@ -8,6 +8,19 @@ import (
 	"time"
 )
 
+// TokenInfo contains token and expiration information
+type TokenInfo struct {
+	AccessToken string
+	ExpiresAt   *time.Time
+}
+
+// TokenManager defines the interface for managing access tokens
+type TokenManager interface {
+	GetAccessToken(ctx context.Context, platform string) (string, error)
+	GetTokenInfo(ctx context.Context, platform string) (*TokenInfo, error)
+	SaveAccessToken(ctx context.Context, platform, accessToken string, expiresAt *time.Time) error
+}
+
 type SocialClient interface {
 	Post(ctx context.Context, post *Post) (interface{}, error)
 	ListPosts(ctx context.Context, limit int) ([]*Post, error)
@@ -165,7 +178,7 @@ func CrossPost(ctx context.Context, post *Post, platforms []*SocialPlatform) (ma
 }
 
 // InitSocialPlatforms initializes social clients from configuration
-func InitSocialPlatforms(configs map[string]*PlatformConfig, threadsDao ConfigDao) ([]*SocialPlatform, error) {
+func InitSocialPlatforms(configs map[string]*PlatformConfig, tokenManager TokenManager) ([]*SocialPlatform, error) {
 	var platforms []*SocialPlatform
 
 	for name, config := range configs {
@@ -223,7 +236,7 @@ func InitSocialPlatforms(configs map[string]*PlatformConfig, threadsDao ConfigDa
 				return nil, fmt.Errorf("missing Threads config for %s", name)
 			}
 			client, err = NewThreadsClientWithDao(config.Name, config.Threads.ClientID, config.Threads.ClientSecret, config.Threads.AccessToken,
-				config.Threads.UserID, threadsDao)
+				config.Threads.UserID, tokenManager)
 			if err != nil {
 				return nil, fmt.Errorf("failed to initialize Threads client for %s: %w", name, err)
 			}

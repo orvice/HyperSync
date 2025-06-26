@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"go.orx.me/apps/hyper-sync/internal/conf"
-	"go.orx.me/apps/hyper-sync/internal/dao"
 	"go.orx.me/apps/hyper-sync/internal/social"
 )
 
@@ -15,10 +14,10 @@ type SocialService struct {
 }
 
 // NewSocialService creates a new social service
-func NewSocialService(threadsDao *dao.ThreadsConfigAdapter) (*SocialService, error) {
+func NewSocialService(tokenManager social.TokenManager) (*SocialService, error) {
 	config := conf.Conf.Socials
 	// Initialize platforms with the configuration
-	platforms, err := social.InitSocialPlatforms(config, threadsDao)
+	platforms, err := social.InitSocialPlatforms(config, tokenManager)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize social platforms: %w", err)
 	}

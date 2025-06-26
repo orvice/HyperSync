@@ -3,8 +3,6 @@ package dao
 import (
 	bmongo "butterfly.orx.me/core/store/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo"
-
-	"go.orx.me/apps/hyper-sync/internal/social"
 )
 
 type MongoDAO struct {
@@ -29,10 +27,4 @@ func NewPostDao(client *mongo.Client) PostDao {
 
 func NewSocialConfigDao(client *mongo.Client) SocialConfigDao {
 	return NewMongoDAO(client)
-}
-
-// NewTokenConfigDao 创建 Token 配置适配器，只处理 access token
-func NewTokenConfigDao(client *mongo.Client) social.ConfigDao {
-	socialDao := NewSocialConfigDao(client)
-	return NewThreadsConfigAdapter(socialDao)
 }

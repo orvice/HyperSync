@@ -7,6 +7,7 @@ import (
 	"github.com/google/wire"
 	"go.orx.me/apps/hyper-sync/internal/dao"
 	"go.orx.me/apps/hyper-sync/internal/service"
+	"go.orx.me/apps/hyper-sync/internal/social"
 )
 
 func NewSyncService(mainSocail string, socials []string) (*service.SyncService, error) {
@@ -15,10 +16,11 @@ func NewSyncService(mainSocail string, socials []string) (*service.SyncService, 
 		dao.NewPostDao,
 		dao.NewSocialConfigDao,
 		dao.NewThreadsConfigAdapter,
-		service.NewSocialService,
-		service.NewSyncService,
 		dao.NewLocker,
 		dao.NewRedisClient,
+		service.NewSocialService,
+		service.NewSyncService,
+		wire.Bind(new(social.TokenManager), new(*dao.ThreadsConfigAdapter)),
 	))
 }
 

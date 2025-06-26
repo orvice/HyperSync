@@ -13,26 +13,8 @@ import (
 	"butterfly.orx.me/core/log"
 )
 
-// TokenInfo 包含 token 和过期时间信息
-type TokenInfo struct {
-	AccessToken string
-	ExpiresAt   *time.Time
-}
-
-// ConfigDao 定义配置数据访问接口，只处理 access token
-type ConfigDao interface {
-	GetAccessToken(ctx context.Context, platform string) (string, error)
-	GetTokenInfo(ctx context.Context, platform string) (*TokenInfo, error)
-	SaveAccessToken(ctx context.Context, platform, accessToken string, expiresAt *time.Time) error
-}
-
 // ThreadsConfig represents Threads configuration
-type ThreadsConfig struct {
-	ClientID     string `yaml:"client_id"`
-	ClientSecret string `yaml:"client_secret"`
-	AccessToken  string `yaml:"access_token"`
-	UserID       int64  `yaml:"user_id"`
-}
+
 
 type ThreadsClient struct {
 	name         string
@@ -40,12 +22,12 @@ type ThreadsClient struct {
 	ClientSecret string
 	AccessToken  string
 	UserID       int64
-	configDao    ConfigDao
+	tokenManager TokenManager
 }
 
-// SetConfigDao sets the config dao for the client (useful for testing)
-func (c *ThreadsClient) SetConfigDao(dao ConfigDao) {
-	c.configDao = dao
+// SetTokenManager sets the token manager for the client (useful for testing)
+func (c *ThreadsClient) SetTokenManager(manager TokenManager) {
+	c.tokenManager = manager
 }
 
 // TokenResponse 表示 Threads API token 响应
@@ -59,7 +41,7 @@ type TokenResponse struct {
 // 当 dao 里不存在 access token 时，将传入的 accessToken 写入 dao
 // 当 dao 里有 access token 时，使用 dao 里的，方便第一次初始化
 func NewThreadsClientWithDao(name string,
-	clientID, clientSecret, accessToken string, userID int64, configDao ConfigDao) (*ThreadsClient, error) {
+	clientID, clientSecret, accessToken string, userID int64, tokenManager TokenManager) (*ThreadsClient, error) {
 
 	logger := log.FromContext(context.Background())
 
@@ -68,13 +50,13 @@ func NewThreadsClientWithDao(name string,
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		UserID:       userID,
-		configDao:    configDao,
+		tokenManager: tokenManager,
 	}
 
 	ctx := context.Background()
 
 	// 尝试从 dao 加载 access token
-	existingToken, err := configDao.GetAccessToken(ctx, "threads")
+	existingToken, err := tokenManager.GetAccessToken(ctx, "threads")
 	if err != nil {
 		logger.Error("failed to get access token from dao", "error", err)
 		return nil, fmt.Errorf("failed to get access token from dao: %w", err)
@@ -87,7 +69,7 @@ func NewThreadsClientWithDao(name string,
 		}
 
 		// 保存到 dao（不设置过期时间，因为这是初始化时的 token）
-		err = configDao.SaveAccessToken(ctx, "threads", accessToken, nil)
+		err = tokenManager.SaveAccessToken(ctx, "threads", accessToken, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to save access token to dao: %w", err)
 		}
@@ -105,15 +87,15 @@ func NewThreadsClientWithDao(name string,
 func (c *ThreadsClient) EnsureValidToken(ctx context.Context) error {
 	logger := log.FromContext(ctx)
 
-	if c.configDao == nil {
-		logger.Error("config dao is not set")
-		return fmt.Errorf("config dao is not set")
+	if c.tokenManager == nil {
+		logger.Error("token manager is not set")
+		return fmt.Errorf("token manager is not set")
 	}
 
 	logger.Debug("checking token validity", "client", c.name)
 
 	// 获取 token 信息（包含过期时间）
-	tokenInfo, err := c.configDao.GetTokenInfo(ctx, "threads")
+	tokenInfo, err := c.tokenManager.GetTokenInfo(ctx, "threads")
 	if err != nil {
 		logger.Error("failed to get token info from dao", "error", err)
 		return fmt.Errorf("failed to get token info: %w", err)
@@ -183,9 +165,9 @@ func (c *ThreadsClient) EnsureValidToken(ctx context.Context) error {
 func (c *ThreadsClient) SaveTokenToDao(ctx context.Context, tokenResp *TokenResponse) error {
 	logger := log.FromContext(ctx)
 
-	if c.configDao == nil {
-		logger.Error("config dao is not set")
-		return fmt.Errorf("config dao is not set")
+	if c.tokenManager == nil {
+		logger.Error("token manager is not set")
+		return fmt.Errorf("token manager is not set")
 	}
 
 	var expiresAt *time.Time
@@ -203,7 +185,7 @@ func (c *ThreadsClient) SaveTokenToDao(ctx context.Context, tokenResp *TokenResp
 			return "never"
 		}())
 
-	err := c.configDao.SaveAccessToken(ctx, "threads", tokenResp.AccessToken, expiresAt)
+	err := c.tokenManager.SaveAccessToken(ctx, "threads", tokenResp.AccessToken, expiresAt)
 	if err != nil {
 		logger.Error("failed to save access token to dao", "client", c.name, "error", err)
 		return fmt.Errorf("failed to save access token to dao: %w", err)
@@ -387,7 +369,7 @@ func (c *ThreadsClient) CreateMediaContainer(ctx context.Context, userID string,
 	logger := log.FromContext(ctx)
 
 	// 确保 token 有效（自动刷新如果需要）
-	if c.configDao != nil {
+	if c.tokenManager != nil {
 		if err := c.EnsureValidToken(ctx); err != nil {
 			logger.Error("failed to ensure valid token", "client", c.name, "error", err)
 			return nil, fmt.Errorf("failed to ensure valid token: %w", err)
@@ -495,7 +477,7 @@ func (c *ThreadsClient) PublishMediaContainer(ctx context.Context, userID, conta
 	logger := log.FromContext(ctx)
 
 	// 确保 token 有效（自动刷新如果需要）
-	if c.configDao != nil {
+	if c.tokenManager != nil {
 		if err := c.EnsureValidToken(ctx); err != nil {
 			logger.Error("failed to ensure valid token", "client", c.name, "error", err)
 			return nil, fmt.Errorf("failed to ensure valid token: %w", err)

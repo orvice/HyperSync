@@ -7,7 +7,7 @@ import (
 	"go.orx.me/apps/hyper-sync/internal/social"
 )
 
-// ThreadsConfigAdapter 适配器，将 SocialConfigDao 适配为 social.ConfigDao
+// ThreadsConfigAdapter 适配器，将 SocialConfigDao 适配为 social.TokenManager
 // 简化版本，只处理 access token
 type ThreadsConfigAdapter struct {
 	socialDao SocialConfigDao
@@ -43,46 +43,31 @@ func (a *ThreadsConfigAdapter) GetTokenInfo(ctx context.Context, platform string
 		return nil, nil // Not found
 	}
 
-	// 根据平台类型获取 token 信息
-	switch platform {
-	case "threads":
-		threadsConfig := configModel.GetThreadsConfig()
-		if threadsConfig != nil {
-			return &social.TokenInfo{
-				AccessToken: threadsConfig.AccessToken,
-				ExpiresAt:   threadsConfig.ExpiresAt,
-			}, nil
+	// 统一从 config.{platform} 中获取 token 信息
+	if platformData, ok := configModel.Config[platform].(map[string]interface{}); ok {
+		// 尝试获取 access_token
+		var accessToken string
+		if token, ok := platformData["access_token"].(string); ok {
+			accessToken = token
+		} else if token, ok := platformData["token"].(string); ok {
+			// 兼容其他平台使用 "token" 字段的情况
+			accessToken = token
 		}
-	case "mastodon":
-		// 从通用配置中获取 mastodon token（mastodon token 通常不会过期）
-		if mastodonData, ok := configModel.Config["mastodon"].(map[string]interface{}); ok {
-			if token, ok := mastodonData["token"].(string); ok {
-				return &social.TokenInfo{
-					AccessToken: token,
-					ExpiresAt:   nil, // Mastodon token 通常不过期
-				}, nil
-			}
+
+		if accessToken == "" {
+			return nil, nil // No token found
 		}
-	case "bluesky":
-		// Bluesky 可能不使用传统的 access token，这里预留接口
-		if blueskyData, ok := configModel.Config["bluesky"].(map[string]interface{}); ok {
-			if token, ok := blueskyData["access_token"].(string); ok {
-				return &social.TokenInfo{
-					AccessToken: token,
-					ExpiresAt:   nil, // 需要根据 Bluesky 的实际情况调整
-				}, nil
-			}
+
+		// 尝试获取过期时间
+		var expiresAt *time.Time
+		if expiry, ok := platformData["expires_at"].(time.Time); ok {
+			expiresAt = &expiry
 		}
-	case "memos":
-		// 从通用配置中获取 memos token
-		if memosData, ok := configModel.Config["memos"].(map[string]interface{}); ok {
-			if token, ok := memosData["token"].(string); ok {
-				return &social.TokenInfo{
-					AccessToken: token,
-					ExpiresAt:   nil, // Memos token 通常不过期
-				}, nil
-			}
-		}
+
+		return &social.TokenInfo{
+			AccessToken: accessToken,
+			ExpiresAt:   expiresAt,
+		}, nil
 	}
 
 	return nil, nil // No token found for this platform
@@ -94,5 +79,5 @@ func (a *ThreadsConfigAdapter) SaveAccessToken(ctx context.Context, platform, ac
 	return a.socialDao.UpdatePlatformToken(ctx, platform, accessToken, expiresAt)
 }
 
-// Ensure ThreadsConfigAdapter implements social.ConfigDao
-var _ social.ConfigDao = (*ThreadsConfigAdapter)(nil)
+// Ensure ThreadsConfigAdapter implements social.TokenManager
+var _ social.TokenManager = (*ThreadsConfigAdapter)(nil)
