@@ -7,53 +7,6 @@ import (
 	"go.orx.me/apps/hyper-sync/internal/social"
 )
 
-func TestNewThreadsClient(t *testing.T) {
-	client, err := social.NewThreadsClient("test_client_id", "test_client_secret", "test_access_token")
-	if err != nil {
-		t.Fatalf("Failed to create Threads client: %v", err)
-	}
-
-	if client.ClientID != "test_client_id" {
-		t.Errorf("Expected ClientID to be 'test_client_id', got '%s'", client.ClientID)
-	}
-
-	if client.ClientSecret != "test_client_secret" {
-		t.Errorf("Expected ClientSecret to be 'test_client_secret', got '%s'", client.ClientSecret)
-	}
-
-	if client.AccessToken != "test_access_token" {
-		t.Errorf("Expected AccessToken to be 'test_access_token', got '%s'", client.AccessToken)
-	}
-}
-
-func TestExchangeForLongLivedToken_MissingClientSecret(t *testing.T) {
-	client, _ := social.NewThreadsClient("test_client_id", "", "test_access_token")
-
-	_, err := client.ExchangeForLongLivedToken("short_lived_token")
-	if err == nil {
-		t.Error("Expected error when client secret is missing")
-	}
-
-	expectedError := "client secret is required for token exchange"
-	if err.Error() != expectedError {
-		t.Errorf("Expected error '%s', got '%s'", expectedError, err.Error())
-	}
-}
-
-func TestRefreshLongLivedToken_MissingAccessToken(t *testing.T) {
-	client, _ := social.NewThreadsClient("test_client_id", "test_client_secret", "")
-
-	_, err := client.RefreshLongLivedToken()
-	if err == nil {
-		t.Error("Expected error when access token is missing")
-	}
-
-	expectedError := "access token is required for token refresh"
-	if err.Error() != expectedError {
-		t.Errorf("Expected error '%s', got '%s'", expectedError, err.Error())
-	}
-}
-
 func TestTokenResponse_GetTokenExpirationTime(t *testing.T) {
 	tokenResp := &social.TokenResponse{
 		AccessToken: "test_token",

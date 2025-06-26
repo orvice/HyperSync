@@ -1,5 +1,7 @@
 package social
 
+import "time"
+
 // PlatformConfig 包含社交平台的基础配置
 type PlatformConfig struct {
 	Name string `yaml:"name"` // 平台名称
@@ -14,6 +16,7 @@ type PlatformConfig struct {
 	Mastodon *MastodonConfig `yaml:"mastodon,omitempty"` // Mastodon 特定配置
 	Bluesky  *BlueskyConfig  `yaml:"bluesky,omitempty"`  // Bluesky 特定配置
 	Memos    *MemosConfig    `yaml:"memos,omitempty"`    // Memos 特定配置
+	Threads  *ThreadsConfig  `yaml:"threads,omitempty"`  // Threads 特定配置
 }
 
 type MemosConfig struct {
@@ -32,6 +35,14 @@ type BlueskyConfig struct {
 	Host     string `yaml:"host"`     // Bluesky 服务器
 	Handle   string `yaml:"handle"`   // 用户名
 	Password string `yaml:"password"` // 密码
+}
+
+type ThreadsConfig struct {
+	ClientID     string `yaml:"client_id"`
+	ClientSecret string `yaml:"client_secret"`
+	AccessToken  string `yaml:"access_token"`
+	UserID       int64  `yaml:"user_id"`
+	ExpiresAt    *time.Time `yaml:"expires_at"`
 }
 
 // ShouldSyncPost 判断是否应该将内容从源平台同步到目标平台

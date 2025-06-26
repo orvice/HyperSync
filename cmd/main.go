@@ -22,6 +22,7 @@ func NewApp() *app.App {
 		Router:  http.Router,
 		InitFunc: []func() error{
 			InitJob,
+			InitTokenRefresh,
 		},
 	})
 	return appCore
@@ -41,6 +42,30 @@ func InitJob() error {
 		runJob(social.Name, social.SyncTo)
 	}
 
+	return nil
+}
+
+// InitTokenRefresh 初始化 token 刷新定时任务
+func InitTokenRefresh() error {
+	logger := log.FromContext(context.Background())
+	logger.Info("Initializing token refresh scheduler")
+
+	schedulerService, err := wire.NewSchedulerService()
+	if err != nil {
+		logger.Error("Failed to create scheduler service", "error", err)
+		return err
+	}
+
+	// 启动 token 刷新定时任务
+	// 每6小时检查一次 token 状态（可以根据需要调整间隔）
+	go func() {
+		ctx := context.Background()
+		interval := 6 * time.Hour
+		logger.Info("Starting token refresh scheduler", "interval", interval)
+		schedulerService.StartTokenRefreshScheduler(ctx, interval)
+	}()
+
+	logger.Info("Token refresh scheduler initialized successfully")
 	return nil
 }
 

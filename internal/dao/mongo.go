@@ -14,9 +14,17 @@ func NewMongoClient() *mongo.Client {
 	return bmongo.GetClient("main")
 }
 
-func NewMongoDAO(client *mongo.Client) PostDao {
+func NewMongoDAO(client *mongo.Client) *MongoDAO {
 	return &MongoDAO{
 		Client:   client,
 		Database: "hypersync",
 	}
+}
+
+func NewPostDao(client *mongo.Client) PostDao {
+	return NewMongoDAO(client)
+}
+
+func NewSocialConfigDao(client *mongo.Client) SocialConfigDao {
+	return NewMongoDAO(client)
 }

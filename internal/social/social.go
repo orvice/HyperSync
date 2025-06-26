@@ -8,6 +8,19 @@ import (
 	"time"
 )
 
+// TokenInfo contains token and expiration information
+type TokenInfo struct {
+	AccessToken string
+	ExpiresAt   *time.Time
+}
+
+// TokenManager defines the interface for managing access tokens
+type TokenManager interface {
+	GetAccessToken(ctx context.Context, platform string) (string, error)
+	GetTokenInfo(ctx context.Context, platform string) (*TokenInfo, error)
+	SaveAccessToken(ctx context.Context, platform, accessToken string, expiresAt *time.Time) error
+}
+
 type SocialClient interface {
 	Post(ctx context.Context, post *Post) (interface{}, error)
 	ListPosts(ctx context.Context, limit int) ([]*Post, error)
@@ -80,6 +93,11 @@ func (m *Media) GetData() ([]byte, error) {
 
 	// No data and no URL
 	return nil, fmt.Errorf("media has no data and no URL")
+}
+
+// GetURL returns the media URL if available
+func (m *Media) GetURL() string {
+	return m.url
 }
 
 // ShouldSyncPost determines if a post should be synced from source to target platform
@@ -160,7 +178,7 @@ func CrossPost(ctx context.Context, post *Post, platforms []*SocialPlatform) (ma
 }
 
 // InitSocialPlatforms initializes social clients from configuration
-func InitSocialPlatforms(configs map[string]*PlatformConfig) ([]*SocialPlatform, error) {
+func InitSocialPlatforms(configs map[string]*PlatformConfig, tokenManager TokenManager) ([]*SocialPlatform, error) {
 	var platforms []*SocialPlatform
 
 	for name, config := range configs {
@@ -211,6 +229,16 @@ func InitSocialPlatforms(configs map[string]*PlatformConfig) ([]*SocialPlatform,
 			client, err = NewBlueskyClient(config.Bluesky.Host, config.Bluesky.Handle, config.Bluesky.Password, config.Name)
 			if err != nil {
 				return nil, fmt.Errorf("failed to initialize Bluesky client for %s: %w", name, err)
+			}
+
+		case "threads":
+			if config.Threads == nil {
+				return nil, fmt.Errorf("missing Threads config for %s", name)
+			}
+			client, err = NewThreadsClientWithDao(config.Name, config.Threads.ClientID, config.Threads.ClientSecret, config.Threads.AccessToken,
+				config.Threads.UserID, tokenManager)
+			if err != nil {
+				return nil, fmt.Errorf("failed to initialize Threads client for %s: %w", name, err)
 			}
 
 		default:

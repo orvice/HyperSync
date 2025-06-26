@@ -14,10 +14,10 @@ type SocialService struct {
 }
 
 // NewSocialService creates a new social service
-func NewSocialService() (*SocialService, error) {
+func NewSocialService(tokenManager social.TokenManager) (*SocialService, error) {
 	config := conf.Conf.Socials
 	// Initialize platforms with the configuration
-	platforms, err := social.InitSocialPlatforms(config)
+	platforms, err := social.InitSocialPlatforms(config, tokenManager)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize social platforms: %w", err)
 	}

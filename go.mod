@@ -1,6 +1,8 @@
 module go.orx.me/apps/hyper-sync
 
-go 1.24.1
+go 1.23.4
+
+toolchain go1.24.3
 
 require (
 	butterfly.orx.me/core v0.0.0-20250621160607-8cd37657d336
@@ -99,6 +101,7 @@ require (
 	github.com/prometheus/common v0.59.1 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
+	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/tomnomnom/linkheader v0.0.0-20180905144013-02ca5825eb80 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.2.12 // indirect
