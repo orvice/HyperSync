@@ -25,8 +25,13 @@ func (c *ContentConverter) MemoToPost(memo *social.Memo) (*social.Post, error) {
 	// Convert memo content to post content
 	content := c.convertMemoContent(memo.Content)
 
-	// Convert visibility
-	visibility := c.convertVisibility(memo.Visibility)
+	// Convert visibility to enum
+	visibilityStr := c.convertVisibility(memo.Visibility)
+	visibility, err := social.ParseVisibilityLevel(visibilityStr)
+	if err != nil {
+		// Use default visibility if parsing fails
+		visibility = social.VisibilityLevelPublic
+	}
 
 	// Handle media resources
 	media, err := c.convertMemoResources(memo.Resources)
@@ -145,7 +150,7 @@ func (c *ContentConverter) PostToMemo(post *social.Post) (*social.Memo, error) {
 	// This is mainly for reverse conversion if needed
 	memo := &social.Memo{
 		Content:    post.Content,
-		Visibility: c.reverseConvertVisibility(post.Visibility),
+		Visibility: c.reverseConvertVisibility(post.Visibility.String()),
 		CreateTime: time.Now(),
 		UpdateTime: time.Now(),
 	}

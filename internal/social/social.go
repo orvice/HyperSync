@@ -289,7 +289,7 @@ type SocialClient interface {
 type Post struct {
 	ID             string
 	Content        string
-	Visibility     string
+	Visibility     VisibilityLevel
 	Media          []Media
 	SourcePlatform string
 	OriginalID     string

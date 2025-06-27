@@ -164,17 +164,15 @@ func (s *SyncService) doSync(ctx context.Context) error {
 			logger.Info("Creating new post in database", "post_id", post.ID)
 
 			ctx, createSpan := s.tracer.StartDatabaseOperation(ctx, "create_post", post.ID)
-			postModel = &dao.PostModel{
-				Social:          s.mainSocail,
-				SocialID:        post.ID,
-				Content:         post.Content,
-				Visibility:      post.Visibility,
-				SourcePlatform:  s.mainSocail,
-				OriginalID:      post.ID,
-				CreatedAt:       post.CreatedAt,
-				UpdatedAt:       time.Now(),
-				CrossPostStatus: make(map[string]dao.CrossPostStatus),
-			}
+			postModel = dao.FromSocialPost(post)
+			// Override specific fields for sync service
+			postModel.Social = s.mainSocail
+			postModel.SocialID = post.ID
+			postModel.SourcePlatform = s.mainSocail
+			postModel.OriginalID = post.ID
+			postModel.CreatedAt = post.CreatedAt
+			postModel.UpdatedAt = time.Now()
+			postModel.CrossPostStatus = make(map[string]dao.CrossPostStatus)
 
 			postID, err = s.postDao.CreatePost(ctx, postModel)
 			if err != nil {

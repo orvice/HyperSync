@@ -76,7 +76,7 @@ func FromSocialPost(post *social.Post) *PostModel {
 	now := time.Now()
 	return &PostModel{
 		Content:        post.Content,
-		Visibility:     post.Visibility,
+		Visibility:     post.Visibility.String(), // Convert enum to string
 		SourcePlatform: post.SourcePlatform,
 		OriginalID:     post.OriginalID,
 		// Media will be stored separately
@@ -88,10 +88,17 @@ func FromSocialPost(post *social.Post) *PostModel {
 
 // ToSocialPost converts a PostModel to a social.Post
 func (p *PostModel) ToSocialPost() *social.Post {
+	// Convert string visibility back to enum
+	visibility, err := social.ParseVisibilityLevel(p.Visibility)
+	if err != nil {
+		// Use default visibility if parsing fails
+		visibility = social.VisibilityLevelPublic
+	}
+
 	return &social.Post{
 		ID:             p.ID.Hex(),
 		Content:        p.Content,
-		Visibility:     p.Visibility,
+		Visibility:     visibility,
 		SourcePlatform: p.SourcePlatform,
 		OriginalID:     p.OriginalID,
 		// Media will need to be loaded separately

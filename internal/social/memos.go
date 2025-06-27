@@ -165,13 +165,15 @@ func (m *Memos) Name() string {
 // Post implements SocialClient interface - posts content to Memos
 func (m *Memos) Post(ctx context.Context, post *Post) (interface{}, error) {
 	// Validate and convert visibility for Memos using enum
-	if post.Visibility != "" {
-		visibilityLevel, err := ValidateAndNormalizeVisibilityLevel("memos", post.Visibility)
+	if post.Visibility.IsValid() {
+		err := ValidateVisibilityLevel("memos", post.Visibility)
 		if err != nil {
 			return nil, fmt.Errorf("invalid visibility for Memos: %w", err)
 		}
 		// Convert enum to Memos-specific visibility value
-		post.Visibility = GetPlatformVisibilityString("memos", visibilityLevel)
+		platformVisibility := GetPlatformVisibilityString("memos", post.Visibility)
+		// TODO: Use platformVisibility when implementing actual posting logic
+		_ = platformVisibility
 	}
 
 	// TODO: Implement Memos posting logic
@@ -219,10 +221,17 @@ func (m *Memos) ListPosts(ctx context.Context, limit int) ([]*Post, error) {
 			}
 		}
 
+		// Convert string visibility to enum
+		visibility, err := ParsePlatformVisibility("memos", memo.Visibility)
+		if err != nil {
+			// Use default visibility if parsing fails
+			visibility = VisibilityLevelPublic
+		}
+
 		post := &Post{
 			ID:             memo.Name,
 			Content:        memo.Content,
-			Visibility:     strings.ToLower(memo.Visibility),
+			Visibility:     visibility,
 			Media:          medias,
 			SourcePlatform: m.name,
 			OriginalID:     memo.UID,

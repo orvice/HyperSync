@@ -41,7 +41,7 @@ func setupTestDB(t *testing.T) (PostDao, func()) {
 func createTestPost() *social.Post {
 	return &social.Post{
 		Content:        "Test content",
-		Visibility:     "public",
+		Visibility:     social.VisibilityLevelPublic,
 		SourcePlatform: "test_platform",
 		OriginalID:     "test_original_id",
 	}
@@ -52,7 +52,7 @@ func TestFromSocialPost(t *testing.T) {
 	model := FromSocialPost(post)
 
 	assert.Equal(t, post.Content, model.Content)
-	assert.Equal(t, post.Visibility, model.Visibility)
+	assert.Equal(t, post.Visibility.String(), model.Visibility)
 	assert.Equal(t, post.SourcePlatform, model.SourcePlatform)
 	assert.Equal(t, post.OriginalID, model.OriginalID)
 	assert.NotZero(t, model.CreatedAt)
@@ -69,7 +69,7 @@ func TestPostModel_ToSocialPost(t *testing.T) {
 
 	assert.Equal(t, model.ID.Hex(), convertedPost.ID)
 	assert.Equal(t, model.Content, convertedPost.Content)
-	assert.Equal(t, model.Visibility, convertedPost.Visibility)
+	assert.Equal(t, model.Visibility, convertedPost.Visibility.String())
 	assert.Equal(t, model.SourcePlatform, convertedPost.SourcePlatform)
 	assert.Equal(t, model.OriginalID, convertedPost.OriginalID)
 }

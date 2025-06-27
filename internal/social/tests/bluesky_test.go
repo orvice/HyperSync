@@ -52,7 +52,7 @@ func TestPost(t *testing.T) {
 		testContent := fmt.Sprintf("Test post from HyperSync unit test - %d", time.Now().Unix())
 		post := &social.Post{
 			Content:    testContent,
-			Visibility: "public",
+			Visibility: social.VisibilityLevelPublic,
 		}
 
 		t.Log("Step 1: Creating post...")
@@ -195,7 +195,7 @@ func TestPostWithMedia(t *testing.T) {
 	testContent := fmt.Sprintf("Test post with media from HyperSync unit test - %d", time.Now().Unix())
 	post := &social.Post{
 		Content:    testContent,
-		Visibility: "public",
+		Visibility: social.VisibilityLevelPublic,
 		Media:      []social.Media{*media},
 	}
 
@@ -327,7 +327,7 @@ func TestPostWithURLMedia(t *testing.T) {
 	testContent := fmt.Sprintf("Test post with URL media from HyperSync unit test - %d", time.Now().Unix())
 	post := &social.Post{
 		Content:    testContent,
-		Visibility: "public",
+		Visibility: social.VisibilityLevelPublic,
 		Media:      []social.Media{*media},
 	}
 

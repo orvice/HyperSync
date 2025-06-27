@@ -33,14 +33,16 @@ func (c *MastodonClient) Name() string {
 
 // Post publishes a new status to Mastodon
 func (c *MastodonClient) Post(ctx context.Context, post *Post) (interface{}, error) {
-	// Validate and normalize visibility for Mastodon using enum
-	visibilityLevel, err := ValidateAndNormalizeVisibilityLevel("mastodon", post.Visibility)
-	if err != nil {
-		return nil, fmt.Errorf("invalid visibility for Mastodon: %w", err)
+	// Validate visibility for Mastodon using enum
+	if post.Visibility.IsValid() {
+		err := ValidateVisibilityLevel("mastodon", post.Visibility)
+		if err != nil {
+			return nil, fmt.Errorf("invalid visibility for Mastodon: %w", err)
+		}
 	}
 
 	// Convert enum to platform-specific string
-	platformVisibility := GetPlatformVisibilityString("mastodon", visibilityLevel)
+	platformVisibility := GetPlatformVisibilityString("mastodon", post.Visibility)
 
 	toot := &mastodon.Toot{
 		Status:     post.Content,
@@ -99,10 +101,17 @@ func (c *MastodonClient) ListPosts(ctx context.Context, limit int) ([]*Post, err
 	// Convert Mastodon statuses to our Post type
 	posts := make([]*Post, 0, len(statuses))
 	for _, status := range statuses {
+		// Convert string visibility to enum
+		visibility, err := ParseVisibilityLevel(status.Visibility)
+		if err != nil {
+			// Use default visibility if parsing fails
+			visibility = VisibilityLevelPublic
+		}
+
 		post := &Post{
 			ID:         string(status.ID),
 			Content:    status.Content,
-			Visibility: status.Visibility,
+			Visibility: visibility,
 		}
 		// Add media attachments if available
 		if len(status.MediaAttachments) > 0 {

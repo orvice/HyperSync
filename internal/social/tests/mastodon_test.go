@@ -45,7 +45,7 @@ func TestMastodonPost(t *testing.T) {
 		// Create a post without media
 		post := &social.Post{
 			Content:    "Test post from HyperSync unit test",
-			Visibility: "public",
+			Visibility: social.VisibilityLevelPublic,
 		}
 
 		resp, err := client.Post(context.Background(), post)
@@ -101,7 +101,7 @@ func TestMastodonPostWithMedia(t *testing.T) {
 	// Create a post with media
 	post := &social.Post{
 		Content:    "Test post with media from HyperSync unit test",
-		Visibility: "public",
+		Visibility: social.VisibilityLevelPublic,
 		Media:      []social.Media{*media},
 	}
 
@@ -142,7 +142,7 @@ func TestMastodonPostWithURLMedia(t *testing.T) {
 	// Create a post with URL-based media
 	post := &social.Post{
 		Content:    "Test post with URL media from HyperSync unit test",
-		Visibility: "public",
+		Visibility: social.VisibilityLevelPublic,
 		Media:      []social.Media{*media},
 	}
 
