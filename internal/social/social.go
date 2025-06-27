@@ -8,29 +8,75 @@ import (
 	"time"
 )
 
-// Visibility constants for different platforms
-const (
-	// Common visibility levels supported across platforms
-	VisibilityPublic   = "public"   // Public posts visible to everyone
-	VisibilityUnlisted = "unlisted" // Public but not shown in public timelines
-	VisibilityPrivate  = "private"  // Only visible to followers/approved users
-	VisibilityDirect   = "direct"   // Direct messages (Mastodon)
+// VisibilityLevel represents the visibility level of a post using type-safe enum
+type VisibilityLevel int
 
-	// Memos specific visibility (mapped to common values)
+const (
+	VisibilityLevelPublic   VisibilityLevel = iota // Public posts visible to everyone
+	VisibilityLevelUnlisted                        // Public but not shown in public timelines
+	VisibilityLevelPrivate                         // Only visible to followers/approved users
+	VisibilityLevelDirect                          // Direct messages (Mastodon only)
+)
+
+// String returns the string representation of the visibility level
+func (v VisibilityLevel) String() string {
+	switch v {
+	case VisibilityLevelPublic:
+		return "public"
+	case VisibilityLevelUnlisted:
+		return "unlisted"
+	case VisibilityLevelPrivate:
+		return "private"
+	case VisibilityLevelDirect:
+		return "direct"
+	default:
+		return "unknown"
+	}
+}
+
+// IsValid checks if the visibility level is valid
+func (v VisibilityLevel) IsValid() bool {
+	return v >= VisibilityLevelPublic && v <= VisibilityLevelDirect
+}
+
+// Legacy string constants for backward compatibility
+const (
+	VisibilityPublic   = "public"
+	VisibilityUnlisted = "unlisted"
+	VisibilityPrivate  = "private"
+	VisibilityDirect   = "direct"
+
+	// Memos platform specific constants
 	MemosVisibilityPublic    = "PUBLIC"
 	MemosVisibilityProtected = "PROTECTED"
 	MemosVisibilityPrivate   = "PRIVATE"
 )
 
-// SupportedVisibilityLevels defines which visibility levels are supported by each platform
-var SupportedVisibilityLevels = map[string][]string{
-	"mastodon": {VisibilityPublic, VisibilityUnlisted, VisibilityPrivate, VisibilityDirect},
-	"bluesky":  {VisibilityPublic, VisibilityPrivate},                     // Bluesky has limited visibility options
-	"threads":  {VisibilityPublic, VisibilityPrivate},                     // Threads basic visibility
-	"memos":    {VisibilityPublic, VisibilityUnlisted, VisibilityPrivate}, // Mapped from Memos values
+// SupportedVisibilityLevels defines which visibility levels are supported by each platform (using enum)
+var SupportedVisibilityLevels = map[string][]VisibilityLevel{
+	"mastodon": {VisibilityLevelPublic, VisibilityLevelUnlisted, VisibilityLevelPrivate, VisibilityLevelDirect},
+	"bluesky":  {VisibilityLevelPublic, VisibilityLevelPrivate},
+	"threads":  {VisibilityLevelPublic, VisibilityLevelPrivate},
+	"memos":    {VisibilityLevelPublic, VisibilityLevelUnlisted, VisibilityLevelPrivate},
 }
 
-// DefaultVisibility defines the default visibility for each platform
+// DefaultVisibilityLevel defines the default visibility for each platform (using enum)
+var DefaultVisibilityLevel = map[string]VisibilityLevel{
+	"mastodon": VisibilityLevelPublic,
+	"bluesky":  VisibilityLevelPublic,
+	"threads":  VisibilityLevelPublic,
+	"memos":    VisibilityLevelPublic,
+}
+
+// Legacy SupportedVisibilityLevelsString for backward compatibility
+var SupportedVisibilityLevelsString = map[string][]string{
+	"mastodon": {VisibilityPublic, VisibilityUnlisted, VisibilityPrivate, VisibilityDirect},
+	"bluesky":  {VisibilityPublic, VisibilityPrivate},
+	"threads":  {VisibilityPublic, VisibilityPrivate},
+	"memos":    {VisibilityPublic, VisibilityUnlisted, VisibilityPrivate},
+}
+
+// DefaultVisibility defines the default visibility for each platform (string)
 var DefaultVisibility = map[string]string{
 	"mastodon": VisibilityPublic,
 	"bluesky":  VisibilityPublic,
@@ -38,31 +84,135 @@ var DefaultVisibility = map[string]string{
 	"memos":    VisibilityPublic,
 }
 
-// ValidateVisibility checks if the given visibility value is valid for the specified platform
-func ValidateVisibility(platform, visibility string) error {
-	if visibility == "" {
-		return nil // Empty visibility is allowed, will use platform default
+// ParseVisibilityLevel converts a string visibility value to VisibilityLevel enum
+func ParseVisibilityLevel(visibility string) (VisibilityLevel, error) {
+	switch visibility {
+	case VisibilityPublic:
+		return VisibilityLevelPublic, nil
+	case VisibilityUnlisted:
+		return VisibilityLevelUnlisted, nil
+	case VisibilityPrivate:
+		return VisibilityLevelPrivate, nil
+	case VisibilityDirect:
+		return VisibilityLevelDirect, nil
+	default:
+		return VisibilityLevel(-1), fmt.Errorf("unknown visibility level: %s", visibility)
+	}
+}
+
+// ParsePlatformVisibility converts platform-specific visibility string to VisibilityLevel enum
+func ParsePlatformVisibility(platform, visibility string) (VisibilityLevel, error) {
+	// Handle Memos specific values first
+	if platform == "memos" {
+		switch visibility {
+		case MemosVisibilityPublic:
+			return VisibilityLevelPublic, nil
+		case MemosVisibilityProtected:
+			return VisibilityLevelUnlisted, nil
+		case MemosVisibilityPrivate:
+			return VisibilityLevelPrivate, nil
+		}
+	}
+
+	// For other platforms or if Memos value not matched, use standard parsing
+	return ParseVisibilityLevel(visibility)
+}
+
+// ValidateVisibilityLevel checks if the given visibility level is valid for the specified platform
+func ValidateVisibilityLevel(platform string, level VisibilityLevel) error {
+	if !level.IsValid() {
+		return fmt.Errorf("invalid visibility level: %d", level)
 	}
 
 	// Get supported levels for the platform
 	supportedLevels, exists := SupportedVisibilityLevels[platform]
 	if !exists {
 		// If platform is not explicitly defined, allow common visibility values
-		supportedLevels = []string{VisibilityPublic, VisibilityUnlisted, VisibilityPrivate}
+		supportedLevels = []VisibilityLevel{VisibilityLevelPublic, VisibilityLevelUnlisted, VisibilityLevelPrivate}
 	}
 
 	// Check if the visibility is supported
-	for _, level := range supportedLevels {
-		if visibility == level {
+	for _, supportedLevel := range supportedLevels {
+		if level == supportedLevel {
 			return nil
 		}
 	}
 
+	// Convert levels to strings for error message
+	var supportedStrings []string
+	for _, l := range supportedLevels {
+		supportedStrings = append(supportedStrings, l.String())
+	}
+
 	return fmt.Errorf("visibility '%s' is not supported by platform '%s'. Supported values: %v",
-		visibility, platform, supportedLevels)
+		level.String(), platform, supportedStrings)
 }
 
-// NormalizeVisibility converts platform-specific visibility values to common values
+// ValidateVisibility checks if the given visibility value is valid for the specified platform (legacy string version)
+func ValidateVisibility(platform, visibility string) error {
+	if visibility == "" {
+		return nil // Empty visibility is allowed, will use platform default
+	}
+
+	// Parse the visibility string to enum
+	level, err := ParsePlatformVisibility(platform, visibility)
+	if err != nil {
+		return err
+	}
+
+	// Validate using the enum version
+	return ValidateVisibilityLevel(platform, level)
+}
+
+// GetPlatformVisibilityString converts VisibilityLevel enum to platform-specific string
+func GetPlatformVisibilityString(platform string, level VisibilityLevel) string {
+	// Handle Memos specific conversion
+	if platform == "memos" {
+		switch level {
+		case VisibilityLevelPublic:
+			return MemosVisibilityPublic
+		case VisibilityLevelUnlisted:
+			return MemosVisibilityProtected
+		case VisibilityLevelPrivate:
+			return MemosVisibilityPrivate
+		default:
+			return MemosVisibilityPublic // default fallback
+		}
+	}
+
+	// For other platforms, return standard string representation
+	return level.String()
+}
+
+// NormalizeVisibilityLevel converts platform-specific visibility string to VisibilityLevel enum
+func NormalizeVisibilityLevel(platform, visibility string) (VisibilityLevel, error) {
+	if visibility == "" {
+		return DefaultVisibilityLevel[platform], nil
+	}
+
+	// Parse the platform-specific visibility to enum
+	return ParsePlatformVisibility(platform, visibility)
+}
+
+// ValidateAndNormalizeVisibilityLevel validates and normalizes visibility for a given platform (enum version)
+func ValidateAndNormalizeVisibilityLevel(platform, visibility string) (VisibilityLevel, error) {
+	// First normalize to enum
+	level, err := NormalizeVisibilityLevel(platform, visibility)
+	if err != nil {
+		return VisibilityLevel(-1), err
+	}
+
+	// Then validate
+	if err := ValidateVisibilityLevel(platform, level); err != nil {
+		return VisibilityLevel(-1), err
+	}
+
+	return level, nil
+}
+
+// Legacy functions for backward compatibility
+
+// NormalizeVisibility converts platform-specific visibility values to common values (legacy string version)
 func NormalizeVisibility(platform, visibility string) string {
 	if visibility == "" {
 		return DefaultVisibility[platform]
@@ -84,7 +234,7 @@ func NormalizeVisibility(platform, visibility string) string {
 	return visibility
 }
 
-// GetPlatformVisibility converts common visibility values to platform-specific values
+// GetPlatformVisibility converts common visibility values to platform-specific values (legacy string version)
 func GetPlatformVisibility(platform, visibility string) string {
 	if visibility == "" {
 		return DefaultVisibility[platform]
@@ -106,7 +256,7 @@ func GetPlatformVisibility(platform, visibility string) string {
 	return visibility
 }
 
-// ValidateAndNormalizeVisibility validates and normalizes visibility for a given platform
+// ValidateAndNormalizeVisibility validates and normalizes visibility for a given platform (legacy string version)
 func ValidateAndNormalizeVisibility(platform, visibility string) (string, error) {
 	normalized := NormalizeVisibility(platform, visibility)
 

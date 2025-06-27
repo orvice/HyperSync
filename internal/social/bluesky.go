@@ -190,9 +190,10 @@ func (b *BlueskyClient) Post(ctx context.Context, post *Post) (interface{}, erro
 		return nil, fmt.Errorf("client not initialized")
 	}
 
-	// Validate visibility for Bluesky
+	// Validate visibility for Bluesky using enum
 	if post.Visibility != "" {
-		if err := ValidateVisibility("bluesky", post.Visibility); err != nil {
+		_, err := ValidateAndNormalizeVisibilityLevel("bluesky", post.Visibility)
+		if err != nil {
 			return nil, fmt.Errorf("invalid visibility for Bluesky: %w", err)
 		}
 	}

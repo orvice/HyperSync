@@ -33,15 +33,18 @@ func (c *MastodonClient) Name() string {
 
 // Post publishes a new status to Mastodon
 func (c *MastodonClient) Post(ctx context.Context, post *Post) (interface{}, error) {
-	// Validate and normalize visibility for Mastodon
-	validatedVisibility, err := ValidateAndNormalizeVisibility("mastodon", post.Visibility)
+	// Validate and normalize visibility for Mastodon using enum
+	visibilityLevel, err := ValidateAndNormalizeVisibilityLevel("mastodon", post.Visibility)
 	if err != nil {
 		return nil, fmt.Errorf("invalid visibility for Mastodon: %w", err)
 	}
 
+	// Convert enum to platform-specific string
+	platformVisibility := GetPlatformVisibilityString("mastodon", visibilityLevel)
+
 	toot := &mastodon.Toot{
 		Status:     post.Content,
-		Visibility: validatedVisibility,
+		Visibility: platformVisibility,
 	}
 
 	// Upload media attachments if any
