@@ -89,7 +89,7 @@ func NewThreadsClientWithDao(name string,
 
 // EnsureValidToken 确保 token 有效，如果快过期则自动刷新
 func (c *ThreadsClient) EnsureValidToken(ctx context.Context) error {
-	logger := log.FromContext(ctx)
+	logger := log.FromContext(ctx).With("method", "ThreadsClient.EnsureValidToken")
 
 	if c.tokenManager == nil {
 		logger.Error("token manager is not set")
