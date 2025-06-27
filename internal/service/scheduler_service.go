@@ -83,11 +83,11 @@ func (s *SchedulerService) RefreshAllTokens(ctx context.Context) {
 
 // RefreshPlatformToken 刷新指定平台的 token
 func (s *SchedulerService) RefreshPlatformToken(ctx context.Context, platformName string, platform *social.SocialPlatform) error {
-	logger := log.FromContext(ctx)
+	logger := log.FromContext(ctx).With("method", "RefreshPlatformToken")
 
 	// 目前只处理 Threads 平台
 	if platform.Config.Type != "threads" {
-		logger.Debug("Skipping non-threads platform", "platform", platformName, "type", platform.Config.Type)
+		logger.Info("Skipping non-threads platform", "platform", platformName, "type", platform.Config.Type)
 		return nil
 	}
 
