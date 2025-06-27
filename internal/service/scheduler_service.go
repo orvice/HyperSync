@@ -114,7 +114,7 @@ func (s *SchedulerService) RefreshPlatformToken(ctx context.Context, platformNam
 
 // RefreshThreadsTokenManually 手动刷新 Threads token（用于测试或紧急情况）
 func (s *SchedulerService) RefreshThreadsTokenManually(ctx context.Context, platformName string) error {
-	logger := log.FromContext(ctx)
+	logger := log.FromContext(ctx).With("platform", platformName, "method", "RefreshThreadsTokenManually")
 
 	platform, err := s.socialService.GetPlatform(platformName)
 	if err != nil {
