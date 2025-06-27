@@ -84,6 +84,7 @@ func (s *SchedulerService) RefreshAllTokens(ctx context.Context) {
 // RefreshPlatformToken 刷新指定平台的 token
 func (s *SchedulerService) RefreshPlatformToken(ctx context.Context, platformName string, platform *social.SocialPlatform) error {
 	logger := log.FromContext(ctx).With("method", "RefreshPlatformToken")
+	ctx = log.WithLogger(ctx, logger)
 
 	// 目前只处理 Threads 平台
 	if platform.Config.Type != "threads" {
