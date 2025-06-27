@@ -60,7 +60,7 @@ func InitTokenRefresh() error {
 	// 每6小时检查一次 token 状态（可以根据需要调整间隔）
 	go func() {
 		ctx := context.Background()
-		interval := 6 * time.Hour
+		interval := time.Minute * 10
 		logger.Info("Starting token refresh scheduler", "interval", interval)
 		schedulerService.StartTokenRefreshScheduler(ctx, interval)
 	}()
