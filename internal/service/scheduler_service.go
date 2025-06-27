@@ -67,7 +67,8 @@ func (s *SchedulerService) RefreshAllTokens(ctx context.Context) {
 	platforms := s.socialService.GetAllPlatforms()
 
 	for platformName, platform := range platforms {
-		logger.Debug("Checking token for platform", "platform", platformName)
+		logger.Info("Checking token for platform",
+			"platform", platformName)
 
 		err := s.RefreshPlatformToken(ctx, platformName, platform)
 		if err != nil {
