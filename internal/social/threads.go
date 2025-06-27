@@ -114,9 +114,27 @@ func (c *ThreadsClient) EnsureValidToken(ctx context.Context) error {
 	c.AccessToken = tokenInfo.AccessToken
 	logger.Debug("loaded access token from dao", "client", c.name)
 
-	// 如果没有过期时间信息，无法判断是否需要刷新，直接使用现有 token
+	// 如果没有过期时间信息，强制刷新token以获取正确的过期时间
 	if tokenInfo.ExpiresAt == nil {
-		logger.Info("no expiration time found for token, using existing token", "client", c.name)
+		logger.Info("no expiration time found for token, forcing refresh to obtain expiry information", "client", c.name)
+
+		tokenResp, err := c.RefreshLongLivedToken()
+		if err != nil {
+			logger.Error("forced token refresh failed", "client", c.name, "error", err)
+			return fmt.Errorf("forced token refresh failed: %w", err)
+		}
+
+		// 保存新的 token 到数据库
+		err = c.SaveTokenToDao(ctx, tokenResp)
+		if err != nil {
+			logger.Error("failed to save force-refreshed token", "client", c.name, "error", err)
+			return fmt.Errorf("failed to save force-refreshed token: %w", err)
+		}
+
+		logger.Info("token successfully force-refreshed with expiry information",
+			"client", c.name,
+			"new_expiry", tokenResp.GetTokenExpirationTime().Format(time.RFC3339))
+
 		return nil
 	}
 
