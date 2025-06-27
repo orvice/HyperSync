@@ -52,7 +52,7 @@ func (s *SchedulerService) StartTokenRefreshScheduler(ctx context.Context, inter
 
 // RefreshAllTokens 检查并刷新所有平台的 token
 func (s *SchedulerService) RefreshAllTokens(ctx context.Context) {
-	logger := log.FromContext(ctx)
+	logger := log.FromContext(ctx).With("method", "RefreshAllTokens")
 
 	// 使用分布式锁确保同一时间只有一个实例在执行 token 刷新
 	lock, err := s.locker.Obtain(ctx, "token_refresh", 5*time.Minute, nil)
