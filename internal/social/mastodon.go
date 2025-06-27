@@ -33,9 +33,15 @@ func (c *MastodonClient) Name() string {
 
 // Post publishes a new status to Mastodon
 func (c *MastodonClient) Post(ctx context.Context, post *Post) (interface{}, error) {
+	// Validate and normalize visibility for Mastodon
+	validatedVisibility, err := ValidateAndNormalizeVisibility("mastodon", post.Visibility)
+	if err != nil {
+		return nil, fmt.Errorf("invalid visibility for Mastodon: %w", err)
+	}
+
 	toot := &mastodon.Toot{
 		Status:     post.Content,
-		Visibility: post.Visibility,
+		Visibility: validatedVisibility,
 	}
 
 	// Upload media attachments if any

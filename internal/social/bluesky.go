@@ -190,6 +190,13 @@ func (b *BlueskyClient) Post(ctx context.Context, post *Post) (interface{}, erro
 		return nil, fmt.Errorf("client not initialized")
 	}
 
+	// Validate visibility for Bluesky
+	if post.Visibility != "" {
+		if err := ValidateVisibility("bluesky", post.Visibility); err != nil {
+			return nil, fmt.Errorf("invalid visibility for Bluesky: %w", err)
+		}
+	}
+
 	logger.Info("creating bluesky post",
 		"content_length", len(post.Content),
 		"media_count", len(post.Media))

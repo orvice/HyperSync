@@ -8,6 +8,115 @@ import (
 	"time"
 )
 
+// Visibility constants for different platforms
+const (
+	// Common visibility levels supported across platforms
+	VisibilityPublic   = "public"   // Public posts visible to everyone
+	VisibilityUnlisted = "unlisted" // Public but not shown in public timelines
+	VisibilityPrivate  = "private"  // Only visible to followers/approved users
+	VisibilityDirect   = "direct"   // Direct messages (Mastodon)
+
+	// Memos specific visibility (mapped to common values)
+	MemosVisibilityPublic    = "PUBLIC"
+	MemosVisibilityProtected = "PROTECTED"
+	MemosVisibilityPrivate   = "PRIVATE"
+)
+
+// SupportedVisibilityLevels defines which visibility levels are supported by each platform
+var SupportedVisibilityLevels = map[string][]string{
+	"mastodon": {VisibilityPublic, VisibilityUnlisted, VisibilityPrivate, VisibilityDirect},
+	"bluesky":  {VisibilityPublic, VisibilityPrivate},                     // Bluesky has limited visibility options
+	"threads":  {VisibilityPublic, VisibilityPrivate},                     // Threads basic visibility
+	"memos":    {VisibilityPublic, VisibilityUnlisted, VisibilityPrivate}, // Mapped from Memos values
+}
+
+// DefaultVisibility defines the default visibility for each platform
+var DefaultVisibility = map[string]string{
+	"mastodon": VisibilityPublic,
+	"bluesky":  VisibilityPublic,
+	"threads":  VisibilityPublic,
+	"memos":    VisibilityPublic,
+}
+
+// ValidateVisibility checks if the given visibility value is valid for the specified platform
+func ValidateVisibility(platform, visibility string) error {
+	if visibility == "" {
+		return nil // Empty visibility is allowed, will use platform default
+	}
+
+	// Get supported levels for the platform
+	supportedLevels, exists := SupportedVisibilityLevels[platform]
+	if !exists {
+		// If platform is not explicitly defined, allow common visibility values
+		supportedLevels = []string{VisibilityPublic, VisibilityUnlisted, VisibilityPrivate}
+	}
+
+	// Check if the visibility is supported
+	for _, level := range supportedLevels {
+		if visibility == level {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("visibility '%s' is not supported by platform '%s'. Supported values: %v",
+		visibility, platform, supportedLevels)
+}
+
+// NormalizeVisibility converts platform-specific visibility values to common values
+func NormalizeVisibility(platform, visibility string) string {
+	if visibility == "" {
+		return DefaultVisibility[platform]
+	}
+
+	// Handle Memos specific values
+	if platform == "memos" {
+		switch visibility {
+		case MemosVisibilityPublic:
+			return VisibilityPublic
+		case MemosVisibilityProtected:
+			return VisibilityUnlisted
+		case MemosVisibilityPrivate:
+			return VisibilityPrivate
+		}
+	}
+
+	// For other platforms, return as-is after validation
+	return visibility
+}
+
+// GetPlatformVisibility converts common visibility values to platform-specific values
+func GetPlatformVisibility(platform, visibility string) string {
+	if visibility == "" {
+		return DefaultVisibility[platform]
+	}
+
+	// Handle Memos specific conversion
+	if platform == "memos" {
+		switch visibility {
+		case VisibilityPublic:
+			return MemosVisibilityPublic
+		case VisibilityUnlisted:
+			return MemosVisibilityProtected
+		case VisibilityPrivate:
+			return MemosVisibilityPrivate
+		}
+	}
+
+	// For other platforms, return as-is
+	return visibility
+}
+
+// ValidateAndNormalizeVisibility validates and normalizes visibility for a given platform
+func ValidateAndNormalizeVisibility(platform, visibility string) (string, error) {
+	normalized := NormalizeVisibility(platform, visibility)
+
+	if err := ValidateVisibility(platform, normalized); err != nil {
+		return "", err
+	}
+
+	return normalized, nil
+}
+
 // TokenInfo contains token and expiration information
 type TokenInfo struct {
 	AccessToken string

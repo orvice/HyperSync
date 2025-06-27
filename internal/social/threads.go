@@ -735,6 +735,13 @@ func (c *ThreadsClient) Post(ctx context.Context, post *Post) (interface{}, erro
 	logger := log.FromContext(ctx)
 	userID := strconv.FormatInt(c.UserID, 10)
 
+	// Validate visibility for Threads
+	if post.Visibility != "" {
+		if err := ValidateVisibility("threads", post.Visibility); err != nil {
+			return nil, fmt.Errorf("invalid visibility for Threads: %w", err)
+		}
+	}
+
 	// Determine post type based on media content
 	mediaCount := len(post.Media)
 

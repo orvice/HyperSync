@@ -164,6 +164,16 @@ func (m *Memos) Name() string {
 
 // Post implements SocialClient interface - posts content to Memos
 func (m *Memos) Post(ctx context.Context, post *Post) (interface{}, error) {
+	// Validate and convert visibility for Memos
+	if post.Visibility != "" {
+		normalizedVisibility, err := ValidateAndNormalizeVisibility("memos", post.Visibility)
+		if err != nil {
+			return nil, fmt.Errorf("invalid visibility for Memos: %w", err)
+		}
+		// Convert to Memos-specific visibility value
+		post.Visibility = GetPlatformVisibility("memos", normalizedVisibility)
+	}
+
 	// TODO: Implement Memos posting logic
 	return nil, fmt.Errorf("Memos Post method not implemented yet")
 }
