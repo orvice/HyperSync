@@ -114,7 +114,8 @@ func (s *SchedulerService) RefreshPlatformToken(ctx context.Context, platformNam
 
 // RefreshThreadsTokenManually 手动刷新 Threads token（用于测试或紧急情况）
 func (s *SchedulerService) RefreshThreadsTokenManually(ctx context.Context, platformName string) error {
-	logger := log.FromContext(ctx).With("platform", platformName, "method", "RefreshThreadsTokenManually")
+	logger := log.FromContext(ctx).With("method", "RefreshThreadsTokenManually")
+	ctx = log.WithLogger(ctx, logger)
 
 	platform, err := s.socialService.GetPlatform(platformName)
 	if err != nil {
@@ -125,6 +126,7 @@ func (s *SchedulerService) RefreshThreadsTokenManually(ctx context.Context, plat
 		return fmt.Errorf("platform %s is not a threads platform", platformName)
 	}
 
+	logger.Info("Getting platform", "platform", platformName)
 	threadsClient, ok := platform.Client.(*social.ThreadsClient)
 	if !ok {
 		return fmt.Errorf("platform %s client is not a ThreadsClient", platformName)
