@@ -131,6 +131,15 @@ func (s *SyncService) doSync(ctx context.Context) error {
 			continue
 		}
 
+		// if post is private, skip
+		if post.Visibility == social.VisibilityLevelPrivate {
+			logger.Info("Post is private, skipping", "post_id", post.ID)
+			s.metrics.IncPostsProcessed(metrics.StatusSkippedPrivate)
+			s.tracer.SetSpanSkipped(postSpan, "post_private", nil)
+			postSpan.End()
+			continue
+		}
+
 		// Check if post already exists in database
 		ctx, dbSpan := s.tracer.StartDatabaseOperation(ctx, "get_post", post.ID)
 		postModel, err := s.postDao.GetBySocialAndSocialID(ctx, s.mainSocail, post.ID)
