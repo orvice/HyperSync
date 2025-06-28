@@ -108,9 +108,9 @@ func ParsePlatformVisibility(platform, visibility string) (VisibilityLevel, erro
 		case MemosVisibilityPublic:
 			return VisibilityLevelPublic, nil
 		case MemosVisibilityProtected:
-			return VisibilityLevelUnlisted, nil
-		case MemosVisibilityPrivate:
 			return VisibilityLevelPrivate, nil
+		case MemosVisibilityPrivate:
+			return VisibilityLevelDirect, nil
 		}
 	}
 

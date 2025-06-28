@@ -82,12 +82,12 @@ var (
 
 // Labels for different status values
 const (
-	StatusProcessed      = "processed"
-	StatusSkippedOld     = "skipped_old"
-	StatusSkippedPrivate = "skipped_private"
-	StatusExists         = "exists"
-	StatusSuccess        = "success"
-	StatusError          = "error"
+	StatusProcessed     = "processed"
+	StatusSkippedOld    = "skipped_old"
+	StatusSkippedDirect = "skipped_direct"
+	StatusExists        = "exists"
+	StatusSuccess       = "success"
+	StatusError         = "error"
 
 	OperationFetchPosts     = "fetch_posts"
 	OperationSyncToPlatform = "sync_to_platform"

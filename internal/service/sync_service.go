@@ -132,10 +132,10 @@ func (s *SyncService) doSync(ctx context.Context) error {
 		}
 
 		// if post is private, skip
-		if post.Visibility == social.VisibilityLevelPrivate {
-			logger.Info("Post is private, skipping", "post_id", post.ID)
-			s.metrics.IncPostsProcessed(metrics.StatusSkippedPrivate)
-			s.tracer.SetSpanSkipped(postSpan, "post_private", nil)
+		if post.Visibility == social.VisibilityLevelDirect {
+			logger.Info("Post is direct, skipping", "post_id", post.ID)
+			s.metrics.IncPostsProcessed(metrics.StatusSkippedDirect)
+			s.tracer.SetSpanSkipped(postSpan, "post_direct", nil)
 			postSpan.End()
 			continue
 		}
