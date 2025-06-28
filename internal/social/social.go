@@ -8,6 +8,37 @@ import (
 	"time"
 )
 
+// Platform represents different social media platforms
+type Platform string
+
+// Platform constants
+const (
+	PlatformMastodon Platform = "mastodon"
+	PlatformBluesky  Platform = "bluesky"
+	PlatformThreads  Platform = "threads"
+	PlatformMemos    Platform = "memos"
+)
+
+// String returns the string representation of the platform
+func (p Platform) String() string {
+	return string(p)
+}
+
+// IsValid checks if the platform is a valid one
+func (p Platform) IsValid() bool {
+	switch p {
+	case PlatformMastodon, PlatformBluesky, PlatformThreads, PlatformMemos:
+		return true
+	default:
+		return false
+	}
+}
+
+// ParsePlatform converts a string to Platform enum
+func ParsePlatform(platformStr string) Platform {
+	return Platform(platformStr)
+}
+
 // VisibilityLevel represents the visibility level of a post using type-safe enum
 type VisibilityLevel int
 
@@ -53,19 +84,19 @@ const (
 )
 
 // SupportedVisibilityLevels defines which visibility levels are supported by each platform (using enum)
-var SupportedVisibilityLevels = map[string][]VisibilityLevel{
-	"mastodon": {VisibilityLevelPublic, VisibilityLevelUnlisted, VisibilityLevelPrivate, VisibilityLevelDirect},
-	"bluesky":  {VisibilityLevelPublic, VisibilityLevelPrivate},
-	"threads":  {VisibilityLevelPublic, VisibilityLevelPrivate},
-	"memos":    {VisibilityLevelPublic, VisibilityLevelUnlisted, VisibilityLevelPrivate},
+var SupportedVisibilityLevels = map[Platform][]VisibilityLevel{
+	PlatformMastodon: {VisibilityLevelPublic, VisibilityLevelUnlisted, VisibilityLevelPrivate, VisibilityLevelDirect},
+	PlatformBluesky:  {VisibilityLevelPublic, VisibilityLevelPrivate},
+	PlatformThreads:  {VisibilityLevelPublic, VisibilityLevelPrivate},
+	PlatformMemos:    {VisibilityLevelPublic, VisibilityLevelUnlisted, VisibilityLevelPrivate},
 }
 
 // DefaultVisibilityLevel defines the default visibility for each platform (using enum)
-var DefaultVisibilityLevel = map[string]VisibilityLevel{
-	"mastodon": VisibilityLevelPublic,
-	"bluesky":  VisibilityLevelPublic,
-	"threads":  VisibilityLevelPublic,
-	"memos":    VisibilityLevelPublic,
+var DefaultVisibilityLevel = map[Platform]VisibilityLevel{
+	PlatformMastodon: VisibilityLevelPublic,
+	PlatformBluesky:  VisibilityLevelPublic,
+	PlatformThreads:  VisibilityLevelPublic,
+	PlatformMemos:    VisibilityLevelPublic,
 }
 
 // Legacy SupportedVisibilityLevelsString for backward compatibility
@@ -103,7 +134,7 @@ func ParseVisibilityLevel(visibility string) (VisibilityLevel, error) {
 // ParsePlatformVisibility converts platform-specific visibility string to VisibilityLevel enum
 func ParsePlatformVisibility(platform, visibility string) (VisibilityLevel, error) {
 	// Handle Memos specific values first
-	if platform == "memos" {
+	if platform == PlatformMemos.String() {
 		switch visibility {
 		case MemosVisibilityPublic:
 			return VisibilityLevelPublic, nil
@@ -124,8 +155,11 @@ func ValidateVisibilityLevel(platform string, level VisibilityLevel) error {
 		return fmt.Errorf("invalid visibility level: %d", level)
 	}
 
+	// Convert string to Platform type
+	platformType := ParsePlatform(platform)
+
 	// Get supported levels for the platform
-	supportedLevels, exists := SupportedVisibilityLevels[platform]
+	supportedLevels, exists := SupportedVisibilityLevels[platformType]
 	if !exists {
 		// If platform is not explicitly defined, allow common visibility values
 		supportedLevels = []VisibilityLevel{VisibilityLevelPublic, VisibilityLevelUnlisted, VisibilityLevelPrivate}
@@ -148,6 +182,32 @@ func ValidateVisibilityLevel(platform string, level VisibilityLevel) error {
 		level.String(), platform, supportedStrings)
 }
 
+// IsVisibilityLevelSupported checks if the given visibility level is supported by the platform without returning an error
+func IsVisibilityLevelSupported(platform string, level VisibilityLevel) bool {
+	if !level.IsValid() {
+		return false
+	}
+
+	// Convert string to Platform type
+	platformType := ParsePlatform(platform)
+
+	// Get supported levels for the platform
+	supportedLevels, exists := SupportedVisibilityLevels[platformType]
+	if !exists {
+		// If platform is not explicitly defined, allow common visibility values
+		supportedLevels = []VisibilityLevel{VisibilityLevelPublic, VisibilityLevelUnlisted, VisibilityLevelPrivate}
+	}
+
+	// Check if the visibility is supported
+	for _, supportedLevel := range supportedLevels {
+		if level == supportedLevel {
+			return true
+		}
+	}
+
+	return false
+}
+
 // ValidateVisibility checks if the given visibility value is valid for the specified platform (legacy string version)
 func ValidateVisibility(platform, visibility string) error {
 	if visibility == "" {
@@ -167,7 +227,7 @@ func ValidateVisibility(platform, visibility string) error {
 // GetPlatformVisibilityString converts VisibilityLevel enum to platform-specific string
 func GetPlatformVisibilityString(platform string, level VisibilityLevel) string {
 	// Handle Memos specific conversion
-	if platform == "memos" {
+	if platform == PlatformMemos.String() {
 		switch level {
 		case VisibilityLevelPublic:
 			return MemosVisibilityPublic
@@ -187,7 +247,9 @@ func GetPlatformVisibilityString(platform string, level VisibilityLevel) string 
 // NormalizeVisibilityLevel converts platform-specific visibility string to VisibilityLevel enum
 func NormalizeVisibilityLevel(platform, visibility string) (VisibilityLevel, error) {
 	if visibility == "" {
-		return DefaultVisibilityLevel[platform], nil
+		// Convert string to Platform type
+		platformType := ParsePlatform(platform)
+		return DefaultVisibilityLevel[platformType], nil
 	}
 
 	// Parse the platform-specific visibility to enum
@@ -219,7 +281,7 @@ func NormalizeVisibility(platform, visibility string) string {
 	}
 
 	// Handle Memos specific values
-	if platform == "memos" {
+	if platform == PlatformMemos.String() {
 		switch visibility {
 		case MemosVisibilityPublic:
 			return VisibilityPublic
@@ -241,7 +303,7 @@ func GetPlatformVisibility(platform, visibility string) string {
 	}
 
 	// Handle Memos specific conversion
-	if platform == "memos" {
+	if platform == PlatformMemos.String() {
 		switch visibility {
 		case VisibilityPublic:
 			return MemosVisibilityPublic
@@ -456,7 +518,7 @@ func InitSocialPlatforms(configs map[string]*PlatformConfig, tokenManager TokenM
 
 		// Initialize the appropriate client based on type
 		switch config.Type {
-		case "memos":
+		case PlatformMemos.String():
 			if config.Memos == nil {
 				return nil, fmt.Errorf("missing Memos config for %s", name)
 			}
@@ -465,7 +527,7 @@ func InitSocialPlatforms(configs map[string]*PlatformConfig, tokenManager TokenM
 			}
 			client = NewMemos(config.Memos.Endpoint, config.Memos.Token, config.Name)
 
-		case "mastodon":
+		case PlatformMastodon.String():
 			if config.Mastodon == nil {
 				return nil, fmt.Errorf("missing Mastodon config for %s", name)
 			}
@@ -476,7 +538,7 @@ func InitSocialPlatforms(configs map[string]*PlatformConfig, tokenManager TokenM
 
 			client = NewMastodonClient(config.Mastodon.Instance, config.Mastodon.Token, config.Name)
 
-		case "bluesky":
+		case PlatformBluesky.String():
 			if config.Bluesky == nil {
 				return nil, fmt.Errorf("missing Bluesky config for %s", name)
 			}
@@ -490,7 +552,7 @@ func InitSocialPlatforms(configs map[string]*PlatformConfig, tokenManager TokenM
 				return nil, fmt.Errorf("failed to initialize Bluesky client for %s: %w", name, err)
 			}
 
-		case "threads":
+		case PlatformThreads.String():
 			if config.Threads == nil {
 				return nil, fmt.Errorf("missing Threads config for %s", name)
 			}

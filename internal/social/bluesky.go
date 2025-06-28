@@ -178,7 +178,7 @@ func NewBlueskyClientFromEnv() (*BlueskyClient, error) {
 
 	// botsky 使用 app password 而不是普通密码
 	// 如果用户提供的是 app password，直接使用；否则假设是 app password
-	return NewBlueskyClient("", handle, password, "bluesky")
+	return NewBlueskyClient("", handle, password, PlatformBluesky.String())
 }
 
 // Post 发布一条Bluesky帖子
@@ -190,11 +190,11 @@ func (b *BlueskyClient) Post(ctx context.Context, post *Post) (interface{}, erro
 		return nil, fmt.Errorf("client not initialized")
 	}
 
-	// Validate visibility for Bluesky using enum
+	// Check if visibility level is supported for Bluesky
 	if post.Visibility.IsValid() {
-		err := ValidateVisibilityLevel("bluesky", post.Visibility)
-		if err != nil {
-			return nil, fmt.Errorf("invalid visibility for Bluesky: %w", err)
+		if !IsVisibilityLevelSupported(PlatformBluesky.String(), post.Visibility) {
+			// Skip posting if visibility level is not supported
+			return nil, nil
 		}
 	}
 
@@ -401,7 +401,7 @@ func (b *BlueskyClient) convertRichPostsToInternalPosts(ctx context.Context, ric
 		post := &Post{
 			ID:             rkey,
 			Content:        richPost.Text,
-			SourcePlatform: "bluesky",
+			SourcePlatform: PlatformBluesky.String(),
 		}
 
 		// 处理媒体附件（如果有的话）

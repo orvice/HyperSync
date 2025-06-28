@@ -33,16 +33,16 @@ func (c *MastodonClient) Name() string {
 
 // Post publishes a new status to Mastodon
 func (c *MastodonClient) Post(ctx context.Context, post *Post) (interface{}, error) {
-	// Validate visibility for Mastodon using enum
+	// Check if visibility level is supported for Mastodon
 	if post.Visibility.IsValid() {
-		err := ValidateVisibilityLevel("mastodon", post.Visibility)
-		if err != nil {
-			return nil, fmt.Errorf("invalid visibility for Mastodon: %w", err)
+		if !IsVisibilityLevelSupported(PlatformMastodon.String(), post.Visibility) {
+			// Skip posting if visibility level is not supported
+			return nil, nil
 		}
 	}
 
 	// Convert enum to platform-specific string
-	platformVisibility := GetPlatformVisibilityString("mastodon", post.Visibility)
+	platformVisibility := GetPlatformVisibilityString(PlatformMastodon.String(), post.Visibility)
 
 	toot := &mastodon.Toot{
 		Status:     post.Content,

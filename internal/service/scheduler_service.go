@@ -87,7 +87,7 @@ func (s *SchedulerService) RefreshPlatformToken(ctx context.Context, platformNam
 	ctx = log.WithLogger(ctx, logger)
 
 	// 目前只处理 Threads 平台
-	if platform.Config.Type != "threads" {
+	if platform.Config.Type != social.PlatformThreads.String() {
 		logger.Info("Skipping non-threads platform", "platform", platformName, "type", platform.Config.Type)
 		return nil
 	}
@@ -124,7 +124,7 @@ func (s *SchedulerService) RefreshThreadsTokenManually(ctx context.Context, plat
 		return fmt.Errorf("platform not found: %w", err)
 	}
 
-	if platform.Config.Type != "threads" {
+	if platform.Config.Type != social.PlatformThreads.String() {
 		return fmt.Errorf("platform %s is not a threads platform", platformName)
 	}
 
@@ -168,7 +168,7 @@ func (s *SchedulerService) GetTokenStatus(ctx context.Context, platformName stri
 		return nil, fmt.Errorf("platform not found: %w", err)
 	}
 
-	if platform.Config.Type != "threads" {
+	if platform.Config.Type != social.PlatformThreads.String() {
 		return &TokenStatus{
 			PlatformName: platformName,
 			PlatformType: platform.Config.Type,

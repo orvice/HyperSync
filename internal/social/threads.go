@@ -735,11 +735,11 @@ func (c *ThreadsClient) Post(ctx context.Context, post *Post) (interface{}, erro
 	logger := log.FromContext(ctx)
 	userID := strconv.FormatInt(c.UserID, 10)
 
-	// Validate visibility for Threads using enum
+	// Check if visibility level is supported for Threads
 	if post.Visibility.IsValid() {
-		err := ValidateVisibilityLevel("threads", post.Visibility)
-		if err != nil {
-			return nil, fmt.Errorf("invalid visibility for Threads: %w", err)
+		if !IsVisibilityLevelSupported(PlatformThreads.String(), post.Visibility) {
+			// Skip posting if visibility level is not supported
+			return nil, nil
 		}
 	}
 

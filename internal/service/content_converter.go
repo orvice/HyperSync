@@ -44,7 +44,7 @@ func (c *ContentConverter) MemoToPost(memo *social.Memo) (*social.Post, error) {
 		Content:        content,
 		Visibility:     visibility,
 		Media:          media,
-		SourcePlatform: "memos",
+		SourcePlatform: social.PlatformMemos.String(),
 		OriginalID:     extractMemoID(memo.Name), // Extract ID from "memos/123" format
 	}
 
