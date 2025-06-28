@@ -185,15 +185,12 @@ func NewBlueskyClientFromEnv() (*BlueskyClient, error) {
 func (b *BlueskyClient) Post(ctx context.Context, post *Post) (interface{}, error) {
 	logger := log.FromContext(ctx)
 
-	// 检查客户端是否已初始化
-	if b.client == nil {
-		return nil, fmt.Errorf("client not initialized")
-	}
-
 	// Check if visibility level is supported for Bluesky
 	if post.Visibility.IsValid() {
 		if !IsVisibilityLevelSupported(PlatformBluesky.String(), post.Visibility) {
 			// Skip posting if visibility level is not supported
+			logger.Info("visibility level not supported for bluesky, skipping.",
+				"visibility", post.Visibility)
 			return nil, nil
 		}
 	}
@@ -322,10 +319,6 @@ func (b *BlueskyClient) Post(ctx context.Context, post *Post) (interface{}, erro
 func (b *BlueskyClient) DeletePost(ctx context.Context, rkey string) error {
 	logger := log.FromContext(ctx)
 
-	if b.client == nil {
-		return fmt.Errorf("client not initialized")
-	}
-
 	logger.Info("deleting bluesky post", "rkey", rkey)
 
 	// 构造完整的 URI - at://did/app.bsky.feed.post/rkey
@@ -351,10 +344,6 @@ func (b *BlueskyClient) DeletePost(ctx context.Context, rkey string) error {
 // ListPosts 获取当前用户的最新帖子
 func (b *BlueskyClient) ListPosts(ctx context.Context, limit int) ([]*Post, error) {
 	logger := log.FromContext(ctx)
-
-	if b.client == nil {
-		return nil, fmt.Errorf("client not initialized")
-	}
 
 	// 设置默认限制
 	if limit <= 0 {
