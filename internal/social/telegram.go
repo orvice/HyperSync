@@ -1,83 +1,31 @@
 package social
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"mime/multipart"
-	"net/http"
 	"strconv"
 	"time"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type Telegram struct {
-	Token  string
+	bot    *tgbotapi.BotAPI
 	ChatID string
 	name   string
-	client *http.Client
 }
 
-// TelegramResponse represents the standard Telegram API response
-type TelegramResponse struct {
-	Ok          bool            `json:"ok"`
-	Result      json.RawMessage `json:"result,omitempty"`
-	ErrorCode   int             `json:"error_code,omitempty"`
-	Description string          `json:"description,omitempty"`
-}
+func NewTelegram(token, chatID, name string) (*Telegram, error) {
+	bot, err := tgbotapi.NewBotAPI(token)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Telegram bot: %w", err)
+	}
 
-// TelegramMessage represents a Telegram message
-type TelegramMessage struct {
-	MessageID int                 `json:"message_id"`
-	From      *TelegramUser       `json:"from,omitempty"`
-	Date      int64               `json:"date"`
-	Chat      *TelegramChat       `json:"chat"`
-	Text      string              `json:"text,omitempty"`
-	Caption   string              `json:"caption,omitempty"`
-	Photo     []TelegramPhotoSize `json:"photo,omitempty"`
-}
-
-// TelegramUser represents a Telegram user
-type TelegramUser struct {
-	ID        int64  `json:"id"`
-	IsBot     bool   `json:"is_bot"`
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name,omitempty"`
-	Username  string `json:"username,omitempty"`
-}
-
-// TelegramChat represents a Telegram chat
-type TelegramChat struct {
-	ID    int64  `json:"id"`
-	Type  string `json:"type"`
-	Title string `json:"title,omitempty"`
-}
-
-// TelegramPhotoSize represents a photo size
-type TelegramPhotoSize struct {
-	FileID       string `json:"file_id"`
-	FileUniqueID string `json:"file_unique_id"`
-	Width        int    `json:"width"`
-	Height       int    `json:"height"`
-	FileSize     int    `json:"file_size,omitempty"`
-}
-
-// TelegramGetUpdatesResponse represents the response from getUpdates
-type TelegramGetUpdatesResponse struct {
-	UpdateID int              `json:"update_id"`
-	Message  *TelegramMessage `json:"message,omitempty"`
-}
-
-func NewTelegram(token, chatID, name string) *Telegram {
 	return &Telegram{
-		Token:  token,
+		bot:    bot,
 		ChatID: chatID,
 		name:   name,
-		client: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-	}
+	}, nil
 }
 
 func (t *Telegram) Name() string {
@@ -94,33 +42,39 @@ func (t *Telegram) Post(ctx context.Context, post *Post) (interface{}, error) {
 		}
 	}
 
+	// Parse chat ID to int64
+	chatID, err := strconv.ParseInt(t.ChatID, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid chat ID '%s': %w", t.ChatID, err)
+	}
+
 	// If there are media attachments, send as photo/document with caption
 	if len(post.Media) > 0 {
-		return t.sendMediaMessage(ctx, post)
+		return t.sendMediaMessage(ctx, chatID, post)
 	}
 
 	// Send as text message
-	return t.sendTextMessage(ctx, post.Content)
+	return t.sendTextMessage(ctx, chatID, post.Content)
 }
 
 // sendTextMessage sends a text message to Telegram
-func (t *Telegram) sendTextMessage(ctx context.Context, text string) (*TelegramMessage, error) {
-	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", t.Token)
+func (t *Telegram) sendTextMessage(_ context.Context, chatID int64, text string) (*tgbotapi.Message, error) {
+	msg := tgbotapi.NewMessage(chatID, text)
 
-	payload := map[string]interface{}{
-		"chat_id": t.ChatID,
-		"text":    text,
+	sentMsg, err := t.bot.Send(msg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send text message: %w", err)
 	}
 
-	return t.makeAPICall(ctx, url, payload)
+	return &sentMsg, nil
 }
 
 // sendMediaMessage sends a message with media to Telegram
-func (t *Telegram) sendMediaMessage(ctx context.Context, post *Post) (*TelegramMessage, error) {
+func (t *Telegram) sendMediaMessage(ctx context.Context, chatID int64, post *Post) (*tgbotapi.Message, error) {
 	// For now, we'll send the first media attachment as a photo with caption
 	// TODO: Support multiple media attachments
 	if len(post.Media) == 0 {
-		return t.sendTextMessage(ctx, post.Content)
+		return t.sendTextMessage(ctx, chatID, post.Content)
 	}
 
 	media := post.Media[0]
@@ -129,112 +83,25 @@ func (t *Telegram) sendMediaMessage(ctx context.Context, post *Post) (*TelegramM
 		return nil, fmt.Errorf("failed to get media data: %w", err)
 	}
 
-	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendPhoto", t.Token)
-
-	var buf bytes.Buffer
-	writer := multipart.NewWriter(&buf)
-
-	// Add chat_id field
-	if err := writer.WriteField("chat_id", t.ChatID); err != nil {
-		return nil, fmt.Errorf("failed to write chat_id field: %w", err)
+	// Create photo message with media data
+	photoFileBytes := tgbotapi.FileBytes{
+		Name:  "image.jpg",
+		Bytes: mediaData,
 	}
 
-	// Add caption field if content exists
+	msg := tgbotapi.NewPhoto(chatID, photoFileBytes)
+
+	// Add caption if content exists
 	if post.Content != "" {
-		if err := writer.WriteField("caption", post.Content); err != nil {
-			return nil, fmt.Errorf("failed to write caption field: %w", err)
-		}
+		msg.Caption = post.Content
 	}
 
-	// Add photo field
-	part, err := writer.CreateFormFile("photo", "image.jpg")
+	sentMsg, err := t.bot.Send(msg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create form file: %w", err)
+		return nil, fmt.Errorf("failed to send photo message: %w", err)
 	}
 
-	if _, err := part.Write(mediaData); err != nil {
-		return nil, fmt.Errorf("failed to write media data: %w", err)
-	}
-
-	if err := writer.Close(); err != nil {
-		return nil, fmt.Errorf("failed to close multipart writer: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", url, &buf)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-
-	resp, err := t.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	var telegramResp TelegramResponse
-	if err := json.Unmarshal(body, &telegramResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	if !telegramResp.Ok {
-		return nil, fmt.Errorf("telegram API error %d: %s", telegramResp.ErrorCode, telegramResp.Description)
-	}
-
-	var message TelegramMessage
-	if err := json.Unmarshal(telegramResp.Result, &message); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal message: %w", err)
-	}
-
-	return &message, nil
-}
-
-// makeAPICall makes a generic API call to Telegram
-func (t *Telegram) makeAPICall(ctx context.Context, url string, payload map[string]interface{}) (*TelegramMessage, error) {
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal payload: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := t.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	var telegramResp TelegramResponse
-	if err := json.Unmarshal(body, &telegramResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	if !telegramResp.Ok {
-		return nil, fmt.Errorf("telegram API error %d: %s", telegramResp.ErrorCode, telegramResp.Description)
-	}
-
-	var message TelegramMessage
-	if err := json.Unmarshal(telegramResp.Result, &message); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal message: %w", err)
-	}
-
-	return &message, nil
+	return &sentMsg, nil
 }
 
 // ListPosts retrieves recent messages from the Telegram chat
@@ -244,47 +111,21 @@ func (t *Telegram) ListPosts(ctx context.Context, limit int) ([]*Post, error) {
 		limit = 20
 	}
 
-	url := fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates", t.Token)
-
-	payload := map[string]interface{}{
-		"limit": limit,
-	}
-
-	jsonData, err := json.Marshal(payload)
+	// Parse chat ID to int64
+	chatID, err := strconv.ParseInt(t.ChatID, 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+		return nil, fmt.Errorf("invalid chat ID '%s': %w", t.ChatID, err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	// Create update config
+	u := tgbotapi.NewUpdate(0)
+	u.Limit = limit
+	u.Timeout = 60
+
+	// Get updates
+	updates, err := t.bot.GetUpdates(u)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := t.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	var telegramResp TelegramResponse
-	if err := json.Unmarshal(body, &telegramResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	if !telegramResp.Ok {
-		return nil, fmt.Errorf("telegram API error %d: %s", telegramResp.ErrorCode, telegramResp.Description)
-	}
-
-	var updates []TelegramGetUpdatesResponse
-	if err := json.Unmarshal(telegramResp.Result, &updates); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal updates: %w", err)
+		return nil, fmt.Errorf("failed to get updates: %w", err)
 	}
 
 	// Convert Telegram messages to our Post type
@@ -297,20 +138,19 @@ func (t *Telegram) ListPosts(ctx context.Context, limit int) ([]*Post, error) {
 		message := update.Message
 
 		// Skip messages not from our target chat
-		chatIDStr := strconv.FormatInt(message.Chat.ID, 10)
-		if chatIDStr != t.ChatID {
+		if message.Chat.ID != chatID {
 			continue
 		}
 
 		// Determine visibility based on chat type
 		visibility := VisibilityLevelPublic
-		if message.Chat.Type == "private" {
+		if message.Chat.IsPrivate() {
 			visibility = VisibilityLevelPrivate
 		}
 
 		// Get content (text or caption)
 		content := message.Text
-		if content == "" {
+		if content == "" && message.Caption != "" {
 			content = message.Caption
 		}
 
@@ -320,22 +160,21 @@ func (t *Telegram) ListPosts(ctx context.Context, limit int) ([]*Post, error) {
 			Visibility:     visibility,
 			SourcePlatform: PlatformTelegram.String(),
 			OriginalID:     strconv.Itoa(message.MessageID),
-			CreatedAt:      time.Unix(message.Date, 0),
+			CreatedAt:      time.Unix(int64(message.Date), 0),
 		}
 
 		// Add media if present
 		if len(message.Photo) > 0 {
 			// Use the largest photo size
-			var largestPhoto TelegramPhotoSize
+			var largestPhoto tgbotapi.PhotoSize
 			for _, photo := range message.Photo {
 				if photo.Width > largestPhoto.Width {
 					largestPhoto = photo
 				}
 			}
 
-			// We can't easily get the actual photo data, so we'll create a placeholder
-			// In a real implementation, you'd use getFile API to get the file path
-			post.Media = []Media{*NewMediaFromURL("")}
+			// Create media with file ID (we can't easily get the actual data without additional API calls)
+			post.Media = []Media{*NewMediaFromURL("")} // Placeholder for now
 		}
 
 		posts = append(posts, post)

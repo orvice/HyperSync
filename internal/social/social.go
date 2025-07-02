@@ -574,7 +574,10 @@ func InitSocialPlatforms(configs map[string]*PlatformConfig, tokenManager TokenM
 			if config.Telegram.Token == "" || config.Telegram.ChatID == "" {
 				return nil, fmt.Errorf("missing Telegram credentials for %s", name)
 			}
-			client = NewTelegram(config.Telegram.Token, config.Telegram.ChatID, config.Name)
+			client, err = NewTelegram(config.Telegram.Token, config.Telegram.ChatID, config.Name)
+			if err != nil {
+				return nil, fmt.Errorf("failed to initialize Telegram client for %s: %w", name, err)
+			}
 
 		default:
 			return nil, fmt.Errorf("unsupported platform type %s for %s", config.Type, name)

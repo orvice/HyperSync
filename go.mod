@@ -10,6 +10,7 @@ require (
 	github.com/bsm/redislock v0.9.4
 	github.com/davhofer/botsky v0.0.0-20250218025645-d30f6a2851dd
 	github.com/gin-gonic/gin v1.10.0
+	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
 	github.com/google/wire v0.6.0
 	github.com/mattn/go-mastodon v0.0.9
 	github.com/prometheus/client_golang v1.20.4
