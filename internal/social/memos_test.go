@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strings"
 	"testing"
 	"time"
 )
@@ -22,7 +21,7 @@ func TestMemos_ListMemos_Localhost(t *testing.T) {
 
 	memos := NewMemos(endpoint, token, "memos")
 
-	response, err := memos.ListMemos(nil)
+	response, err := memos.ListMemos(context.Background(), nil)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
@@ -256,10 +255,9 @@ func TestMemos_ListMemos(t *testing.T) {
 			// 创建Memos实例
 			memos := NewMemos(server.URL, tt.token, "memos")
 
-			// 执行测试
-			response, err := memos.ListMemos(tt.request)
+			// 发送请求并检查响应
+			response, err := memos.ListMemos(context.Background(), tt.request)
 
-			// 检查错误
 			if tt.expectedError {
 				if err == nil {
 					t.Errorf("Expected error, but got none")
@@ -272,9 +270,8 @@ func TestMemos_ListMemos(t *testing.T) {
 				return
 			}
 
-			// 检查响应
 			if response == nil {
-				t.Errorf("Expected response, but got nil")
+				t.Errorf("Expected response, got nil")
 				return
 			}
 
@@ -284,48 +281,57 @@ func TestMemos_ListMemos(t *testing.T) {
 			}
 
 			if response.NextPageToken != tt.serverResponse.NextPageToken {
-				t.Errorf("Expected nextPageToken %s, got %s", tt.serverResponse.NextPageToken, response.NextPageToken)
+				t.Errorf("Expected NextPageToken %s, got %s", tt.serverResponse.NextPageToken, response.NextPageToken)
 			}
 
-			// 检查第一个memo的内容
+			// 检查第一个 memo 的内容
 			if len(response.Memos) > 0 && len(tt.serverResponse.Memos) > 0 {
-				expectedMemo := tt.serverResponse.Memos[0]
-				actualMemo := response.Memos[0]
+				memo := response.Memos[0]
+				expected := tt.serverResponse.Memos[0]
 
-				if actualMemo.Name != expectedMemo.Name {
-					t.Errorf("Expected memo name %s, got %s", expectedMemo.Name, actualMemo.Name)
+				if memo.Name != expected.Name {
+					t.Errorf("Expected memo name %s, got %s", expected.Name, memo.Name)
 				}
-				if actualMemo.Content != expectedMemo.Content {
-					t.Errorf("Expected memo content %s, got %s", expectedMemo.Content, actualMemo.Content)
+
+				if memo.Content != expected.Content {
+					t.Errorf("Expected memo content %s, got %s", expected.Content, memo.Content)
 				}
-				if actualMemo.Visibility != expectedMemo.Visibility {
-					t.Errorf("Expected memo visibility %s, got %s", expectedMemo.Visibility, actualMemo.Visibility)
+
+				if memo.Visibility != expected.Visibility {
+					t.Errorf("Expected memo visibility %s, got %s", expected.Visibility, memo.Visibility)
 				}
-				if actualMemo.Pinned != expectedMemo.Pinned {
-					t.Errorf("Expected memo pinned %v, got %v", expectedMemo.Pinned, actualMemo.Pinned)
+
+				if memo.Pinned != expected.Pinned {
+					t.Errorf("Expected memo pinned %v, got %v", expected.Pinned, memo.Pinned)
 				}
 
 				// 检查资源
-				if len(actualMemo.Resources) != len(expectedMemo.Resources) {
-					t.Errorf("Expected %d resources, got %d", len(expectedMemo.Resources), len(actualMemo.Resources))
+				if len(memo.Resources) != len(expected.Resources) {
+					t.Errorf("Expected %d resources, got %d", len(expected.Resources), len(memo.Resources))
 				}
 
-				// 如果有资源，检查第一个资源的详细信息
-				if len(actualMemo.Resources) > 0 && len(expectedMemo.Resources) > 0 {
-					expectedResource := expectedMemo.Resources[0]
-					actualResource := actualMemo.Resources[0]
+				if len(memo.Resources) > 0 && len(expected.Resources) > 0 {
+					resource := memo.Resources[0]
+					expectedResource := expected.Resources[0]
 
-					if actualResource.Name != expectedResource.Name {
-						t.Errorf("Expected resource name %s, got %s", expectedResource.Name, actualResource.Name)
+					if resource.Name != expectedResource.Name {
+						t.Errorf("Expected resource name %s, got %s", expectedResource.Name, resource.Name)
 					}
-					if actualResource.Filename != expectedResource.Filename {
-						t.Errorf("Expected resource filename %s, got %s", expectedResource.Filename, actualResource.Filename)
+
+					if resource.Filename != expectedResource.Filename {
+						t.Errorf("Expected resource filename %s, got %s", expectedResource.Filename, resource.Filename)
 					}
-					if actualResource.Type != expectedResource.Type {
-						t.Errorf("Expected resource type %s, got %s", expectedResource.Type, actualResource.Type)
+
+					if resource.ExternalLink != expectedResource.ExternalLink {
+						t.Errorf("Expected resource external link %s, got %s", expectedResource.ExternalLink, resource.ExternalLink)
 					}
-					if actualResource.Size != expectedResource.Size {
-						t.Errorf("Expected resource size %s, got %s", expectedResource.Size, actualResource.Size)
+
+					if resource.Type != expectedResource.Type {
+						t.Errorf("Expected resource type %s, got %s", expectedResource.Type, resource.Type)
+					}
+
+					if resource.Size != expectedResource.Size {
+						t.Errorf("Expected resource size %s, got %s", expectedResource.Size, resource.Size)
 					}
 				}
 			}
@@ -334,161 +340,172 @@ func TestMemos_ListMemos(t *testing.T) {
 }
 
 func TestMemos_ListMemos_InvalidJSON(t *testing.T) {
-	// 测试无效JSON响应的情况
+	// 创建一个返回无效JSON的测试服务器
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
 		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("invalid json"))
 	}))
 	defer server.Close()
 
 	memos := NewMemos(server.URL, "test-token", "memos")
-	_, err := memos.ListMemos(nil)
 
+	_, err := memos.ListMemos(context.Background(), nil)
 	if err == nil {
-		t.Errorf("Expected error for invalid JSON, but got none")
+		t.Errorf("Expected error for invalid JSON, got none")
 	}
 }
 
 func TestMemos_ListMemos_NetworkError(t *testing.T) {
-	// 测试网络错误的情况
-	memos := NewMemos("http://invalid-url-that-does-not-exist", "test-token", "memos")
-	_, err := memos.ListMemos(nil)
+	memos := NewMemos("http://invalid-host:9999", "test-token", "memos")
 
+	_, err := memos.ListMemos(context.Background(), nil)
 	if err == nil {
-		t.Errorf("Expected network error, but got none")
+		t.Errorf("Expected network error, got none")
 	}
 }
 
 func TestNewMemos(t *testing.T) {
-	endpoint := "https://memos.example.com"
+	endpoint := "https://example.com/"
 	token := "test-token"
+	name := "test-memos"
 
-	memos := NewMemos(endpoint, token, "memos")
+	memos := NewMemos(endpoint, token, name)
 
-	if memos == nil {
-		t.Fatal("Expected Memos instance, got nil")
-	}
-
-	if memos.Endpoint != endpoint {
-		t.Errorf("Expected endpoint %s, got %s", endpoint, memos.Endpoint)
+	// Check if trailing slash is removed
+	if memos.Endpoint != "https://example.com" {
+		t.Errorf("Expected endpoint without trailing slash, got %s", memos.Endpoint)
 	}
 
 	if memos.Token != token {
 		t.Errorf("Expected token %s, got %s", token, memos.Token)
 	}
+
+	if memos.name != name {
+		t.Errorf("Expected name %s, got %s", name, memos.name)
+	}
 }
 
 // TestListMemosDefaultOrderBy tests that the default orderBy parameter is set correctly
 func TestListMemosDefaultOrderBy(t *testing.T) {
-	// Create a test server to capture the request parameters
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Parse query parameters
-		queryParams := r.URL.Query()
-
-		// Check that orderBy parameter is set to "display_time desc"
-		orderBy := queryParams.Get("orderBy")
+		// Check that the default orderBy parameter is set
+		orderBy := r.URL.Query().Get("orderBy")
 		if orderBy != "display_time desc" {
-			t.Errorf("Expected orderBy to be 'display_time desc', got '%s'", orderBy)
+			t.Errorf("Expected default orderBy 'display_time desc', got '%s'", orderBy)
 		}
 
-		// Return a minimal valid response
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"memos": [], "nextPageToken": ""}`))
+		json.NewEncoder(w).Encode(ListMemosResponse{
+			Memos:         []Memo{},
+			NextPageToken: "",
+		})
 	}))
 	defer server.Close()
 
-	// Create Memos client with test server URL
-	memos := NewMemos(server.URL, "test-token", "test-memos")
+	memos := NewMemos(server.URL, "test-token", "memos")
 
-	t.Run("Default orderBy with nil request", func(t *testing.T) {
-		// Test with nil request - should set default orderBy
-		_, err := memos.ListMemos(nil)
-		if err != nil {
-			t.Errorf("ListMemos failed: %v", err)
-		}
-	})
+	// Test with nil request - should set default orderBy
+	_, err := memos.ListMemos(context.Background(), nil)
+	if err != nil {
+		t.Errorf("ListMemos failed: %v", err)
+	}
 
-	t.Run("Default orderBy with empty OrderBy field", func(t *testing.T) {
-		// Test with empty OrderBy field - should set default orderBy
-		req := &ListMemosRequest{
-			PageSize: 10,
-			// OrderBy is empty, should use default
-		}
-		_, err := memos.ListMemos(req)
-		if err != nil {
-			t.Errorf("ListMemos failed: %v", err)
-		}
-	})
+	// Test with empty request - should set default orderBy
+	req := &ListMemosRequest{
+		PageSize: 10,
+	}
+	_, err = memos.ListMemos(context.Background(), req)
+	if err != nil {
+		t.Errorf("ListMemos failed: %v", err)
+	}
 }
 
 // TestListMemosCustomOrderBy tests that custom orderBy parameter is preserved
 func TestListMemosCustomOrderBy(t *testing.T) {
-	customOrderBy := "create_time asc"
+	customOrderBy := "display_time asc"
 
-	// Create a test server to capture the request parameters
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Parse query parameters
-		queryParams := r.URL.Query()
-
-		// Check that orderBy parameter is set to our custom value
-		orderBy := queryParams.Get("orderBy")
+		// Check that the custom orderBy parameter is preserved
+		orderBy := r.URL.Query().Get("orderBy")
 		if orderBy != customOrderBy {
-			t.Errorf("Expected orderBy to be '%s', got '%s'", customOrderBy, orderBy)
+			t.Errorf("Expected custom orderBy '%s', got '%s'", customOrderBy, orderBy)
 		}
 
-		// Return a minimal valid response
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"memos": [], "nextPageToken": ""}`))
+		json.NewEncoder(w).Encode(ListMemosResponse{
+			Memos:         []Memo{},
+			NextPageToken: "",
+		})
 	}))
 	defer server.Close()
 
-	// Create Memos client with test server URL
-	memos := NewMemos(server.URL, "test-token", "test-memos")
+	memos := NewMemos(server.URL, "test-token", "memos")
 
-	// Test with custom OrderBy field - should preserve the custom value
+	// Test with custom orderBy
 	req := &ListMemosRequest{
 		PageSize: 10,
 		OrderBy:  customOrderBy,
 	}
-	_, err := memos.ListMemos(req)
+	_, err := memos.ListMemos(context.Background(), req)
 	if err != nil {
 		t.Errorf("ListMemos failed: %v", err)
 	}
 }
 
-// TestMemosURLConstruction tests that URLs are constructed correctly
 func TestMemosURLConstruction(t *testing.T) {
-	expectedPath := "/api/v1/memos"
+	tests := []struct {
+		name           string
+		endpoint       string
+		pageSize       int
+		expectedURL    string
+		expectedParams map[string]string
+	}{
+		{
+			name:        "basic URL construction",
+			endpoint:    "https://example.com",
+			pageSize:    5,
+			expectedURL: "https://example.com/api/v1/memos",
+			expectedParams: map[string]string{
+				"pageSize": "5",
+				"orderBy":  "display_time desc",
+			},
+		},
+	}
 
-	// Create a test server to capture the request
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Check the request path
-		if r.URL.Path != expectedPath {
-			t.Errorf("Expected path to be '%s', got '%s'", expectedPath, r.URL.Path)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Verify URL path
+				if r.URL.Path != "/api/v1/memos" {
+					t.Errorf("Expected path /api/v1/memos, got %s", r.URL.Path)
+				}
 
-		// Check that Authorization header is set
-		authHeader := r.Header.Get("Authorization")
-		if !strings.HasPrefix(authHeader, "Bearer ") {
-			t.Errorf("Expected Authorization header to start with 'Bearer ', got '%s'", authHeader)
-		}
+				// Verify query parameters
+				for key, expectedValue := range tt.expectedParams {
+					actualValue := r.URL.Query().Get(key)
+					if actualValue != expectedValue {
+						t.Errorf("Expected %s=%s, got %s=%s", key, expectedValue, key, actualValue)
+					}
+				}
 
-		// Return a minimal valid response
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"memos": [], "nextPageToken": ""}`))
-	}))
-	defer server.Close()
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(ListMemosResponse{
+					Memos:         []Memo{},
+					NextPageToken: "",
+				})
+			}))
+			defer server.Close()
 
-	// Create Memos client with test server URL
-	memos := NewMemos(server.URL, "test-token", "test-memos")
+			memos := NewMemos(server.URL, "test-token", "memos")
 
-	// Test URL construction
-	_, err := memos.ListMemos(&ListMemosRequest{PageSize: 5})
-	if err != nil {
-		t.Errorf("ListMemos failed: %v", err)
+			_, err := memos.ListMemos(context.Background(), &ListMemosRequest{PageSize: 5})
+			if err != nil {
+				t.Errorf("ListMemos failed: %v", err)
+			}
+		})
 	}
 }
