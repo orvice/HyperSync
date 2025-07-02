@@ -17,6 +17,7 @@ const (
 	PlatformBluesky  Platform = "bluesky"
 	PlatformThreads  Platform = "threads"
 	PlatformMemos    Platform = "memos"
+	PlatformTelegram Platform = "telegram"
 )
 
 // String returns the string representation of the platform
@@ -27,7 +28,7 @@ func (p Platform) String() string {
 // IsValid checks if the platform is a valid one
 func (p Platform) IsValid() bool {
 	switch p {
-	case PlatformMastodon, PlatformBluesky, PlatformThreads, PlatformMemos:
+	case PlatformMastodon, PlatformBluesky, PlatformThreads, PlatformMemos, PlatformTelegram:
 		return true
 	default:
 		return false
@@ -89,6 +90,7 @@ var SupportedVisibilityLevels = map[Platform][]VisibilityLevel{
 	PlatformBluesky:  {VisibilityLevelPublic, VisibilityLevelPrivate},
 	PlatformThreads:  {VisibilityLevelPublic, VisibilityLevelPrivate},
 	PlatformMemos:    {VisibilityLevelPublic, VisibilityLevelUnlisted, VisibilityLevelPrivate},
+	PlatformTelegram: {VisibilityLevelPublic, VisibilityLevelPrivate},
 }
 
 // DefaultVisibilityLevel defines the default visibility for each platform (using enum)
@@ -97,6 +99,7 @@ var DefaultVisibilityLevel = map[Platform]VisibilityLevel{
 	PlatformBluesky:  VisibilityLevelPublic,
 	PlatformThreads:  VisibilityLevelPublic,
 	PlatformMemos:    VisibilityLevelPublic,
+	PlatformTelegram: VisibilityLevelPublic,
 }
 
 // Legacy SupportedVisibilityLevelsString for backward compatibility
@@ -105,6 +108,7 @@ var SupportedVisibilityLevelsString = map[string][]string{
 	"bluesky":  {VisibilityPublic, VisibilityPrivate},
 	"threads":  {VisibilityPublic, VisibilityPrivate},
 	"memos":    {VisibilityPublic, VisibilityUnlisted, VisibilityPrivate},
+	"telegram": {VisibilityPublic, VisibilityPrivate},
 }
 
 // DefaultVisibility defines the default visibility for each platform (string)
@@ -113,6 +117,7 @@ var DefaultVisibility = map[string]string{
 	"bluesky":  VisibilityPublic,
 	"threads":  VisibilityPublic,
 	"memos":    VisibilityPublic,
+	"telegram": VisibilityPublic,
 }
 
 // ParseVisibilityLevel converts a string visibility value to VisibilityLevel enum
@@ -139,9 +144,9 @@ func ParsePlatformVisibility(platform, visibility string) (VisibilityLevel, erro
 		case MemosVisibilityPublic:
 			return VisibilityLevelPublic, nil
 		case MemosVisibilityProtected:
-			return VisibilityLevelPrivate, nil
+			return VisibilityLevelUnlisted, nil
 		case MemosVisibilityPrivate:
-			return VisibilityLevelDirect, nil
+			return VisibilityLevelPrivate, nil
 		}
 	}
 
@@ -560,6 +565,18 @@ func InitSocialPlatforms(configs map[string]*PlatformConfig, tokenManager TokenM
 				config.Threads.UserID, tokenManager)
 			if err != nil {
 				return nil, fmt.Errorf("failed to initialize Threads client for %s: %w", name, err)
+			}
+
+		case PlatformTelegram.String():
+			if config.Telegram == nil {
+				return nil, fmt.Errorf("missing Telegram config for %s", name)
+			}
+			if config.Telegram.Token == "" || config.Telegram.ChatID == "" {
+				return nil, fmt.Errorf("missing Telegram credentials for %s", name)
+			}
+			client, err = NewTelegram(config.Telegram.Token, config.Telegram.ChatID, config.Name)
+			if err != nil {
+				return nil, fmt.Errorf("failed to initialize Telegram client for %s: %w", name, err)
 			}
 
 		default:
