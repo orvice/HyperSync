@@ -17,6 +17,7 @@ type PlatformConfig struct {
 	Bluesky  *BlueskyConfig  `yaml:"bluesky,omitempty"`  // Bluesky 特定配置
 	Memos    *MemosConfig    `yaml:"memos,omitempty"`    // Memos 特定配置
 	Threads  *ThreadsConfig  `yaml:"threads,omitempty"`  // Threads 特定配置
+	Telegram *TelegramConfig `yaml:"telegram,omitempty"` // Telegram 特定配置
 }
 
 type MemosConfig struct {
@@ -38,11 +39,17 @@ type BlueskyConfig struct {
 }
 
 type ThreadsConfig struct {
-	ClientID     string `yaml:"client_id"`
-	ClientSecret string `yaml:"client_secret"`
-	AccessToken  string `yaml:"access_token"`
-	UserID       int64  `yaml:"user_id"`
+	ClientID     string     `yaml:"client_id"`
+	ClientSecret string     `yaml:"client_secret"`
+	AccessToken  string     `yaml:"access_token"`
+	UserID       int64      `yaml:"user_id"`
 	ExpiresAt    *time.Time `yaml:"expires_at"`
+}
+
+// TelegramConfig 包含 Telegram 平台的特定配置
+type TelegramConfig struct {
+	Token  string `yaml:"token"`   // Bot Token
+	ChatID string `yaml:"chat_id"` // 目标聊天ID（群组、频道或用户ID）
 }
 
 // ShouldSyncPost 判断是否应该将内容从源平台同步到目标平台
