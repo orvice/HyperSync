@@ -54,7 +54,7 @@ type ListMemosRequest struct {
 	ContentSearch string `json:"contentSearch,omitempty"` // 内容搜索
 }
 
-// Resource 定义资源结构
+// Resource 定义资源结构 (deprecated, use Attachment for new API)
 type Resource struct {
 	Name         string `json:"name"`
 	CreateTime   string `json:"createTime"`
@@ -66,21 +66,72 @@ type Resource struct {
 	Memo         string `json:"memo"`
 }
 
+// Attachment 定义附件结构 (新版 API)
+type Attachment struct {
+	Name         string `json:"name"`
+	CreateTime   string `json:"createTime"`
+	Filename     string `json:"filename"`
+	Content      string `json:"content"`
+	ExternalLink string `json:"externalLink"`
+	Type         string `json:"type"`
+	Size         string `json:"size"`
+	Memo         string `json:"memo"`
+}
+
+// Node 定义节点结构
+type Node struct {
+	Type          string         `json:"type"`
+	ParagraphNode *ParagraphNode `json:"paragraphNode,omitempty"`
+	// 可以根据需要添加其他节点类型
+}
+
+// ParagraphNode 定义段落节点
+type ParagraphNode struct {
+	Children []ChildNode `json:"children"`
+}
+
+// ChildNode 定义子节点
+type ChildNode struct {
+	Type     string    `json:"type"`
+	TextNode *TextNode `json:"textNode,omitempty"`
+	// 可以根据需要添加其他子节点类型
+}
+
+// TextNode 定义文本节点
+type TextNode struct {
+	Content string `json:"content"`
+}
+
+// Property 定义备忘录属性
+type Property struct {
+	HasLink            bool `json:"hasLink"`
+	HasTaskList        bool `json:"hasTaskList"`
+	HasCode            bool `json:"hasCode"`
+	HasIncompleteTasks bool `json:"hasIncompleteTasks"`
+}
+
 // Memo 定义备忘录结构
 type Memo struct {
-	Name        string     `json:"name"`
-	UID         string     `json:"uid"`
-	RowStatus   string     `json:"rowStatus"`
-	Creator     string     `json:"creator"`
-	CreateTime  time.Time  `json:"createTime"`
-	UpdateTime  time.Time  `json:"updateTime"`
-	DisplayTime time.Time  `json:"displayTime"`
-	Content     string     `json:"content"`
-	Visibility  string     `json:"visibility"`
-	Pinned      bool       `json:"pinned"`
-	Resources   []Resource `json:"resources,omitempty"`
-	Relations   []string   `json:"relations,omitempty"`
-	Reactions   []string   `json:"reactions,omitempty"`
+	Name        string       `json:"name"`
+	State       string       `json:"state"` // NORMAL, ARCHIVED, etc.
+	Creator     string       `json:"creator"`
+	CreateTime  time.Time    `json:"createTime"`
+	UpdateTime  time.Time    `json:"updateTime"`
+	DisplayTime time.Time    `json:"displayTime"`
+	Content     string       `json:"content"`
+	Nodes       []Node       `json:"nodes,omitempty"`
+	Visibility  string       `json:"visibility"`
+	Tags        []string     `json:"tags,omitempty"`
+	Pinned      bool         `json:"pinned"`
+	Attachments []Attachment `json:"attachments,omitempty"`
+	Relations   []string     `json:"relations,omitempty"`
+	Reactions   []string     `json:"reactions,omitempty"`
+	Property    *Property    `json:"property,omitempty"`
+	Snippet     string       `json:"snippet,omitempty"`
+	// 为了向后兼容，保留旧字段但标记为 deprecated
+	UID       string     `json:"uid,omitempty"`       // deprecated
+	RowStatus string     `json:"rowStatus,omitempty"` // deprecated
+	Resources []Resource `json:"resources,omitempty"` // deprecated
 }
 
 // ListMemosResponse 定义备忘录列表响应
@@ -318,7 +369,31 @@ func (m *Memos) ListPosts(ctx context.Context, limit int) ([]*Post, error) {
 	var posts []*Post
 	for _, memo := range resp.Memos {
 		var medias = make([]Media, 0)
-		if memo.Resources != nil {
+
+		// 处理新版 API 的 Attachments
+		if memo.Attachments != nil {
+			for _, attachment := range memo.Attachments {
+				// 根据附件类型创建不同的 Media 对象
+				if attachment.ExternalLink != "" {
+					// 如果有外部链接，使用外部链接创建 Media
+					media := NewMediaFromURL(attachment.ExternalLink)
+					media.Description = attachment.Filename
+					medias = append(medias, *media)
+				} else if attachment.Content != "" {
+					// 如果有内容数据，使用内容创建 Media
+					media := NewMedia([]byte(attachment.Content))
+					media.Description = attachment.Filename
+					medias = append(medias, *media)
+				} else if attachment.Name != "" {
+					// 如果有附件名称，构建资源 URL
+					resourceURL := fmt.Sprintf("%s/file/%s/%s", m.Endpoint, attachment.Name, attachment.Filename)
+					media := NewMediaFromURL(resourceURL)
+					media.Description = attachment.Filename
+					medias = append(medias, *media)
+				}
+			}
+		} else if memo.Resources != nil {
+			// 向后兼容：处理旧版 API 的 Resources
 			for _, resource := range memo.Resources {
 				// 根据资源类型创建不同的 Media 对象
 				if resource.ExternalLink != "" {
@@ -328,14 +403,11 @@ func (m *Memos) ListPosts(ctx context.Context, limit int) ([]*Post, error) {
 					medias = append(medias, *media)
 				} else if resource.Content != "" {
 					// 如果有内容数据，使用内容创建 Media
-					// 注意：这里假设 Content 是 base64 编码的数据或直接的字节数据
-					// 实际情况可能需要根据 Memos API 的具体实现进行调整
 					media := NewMedia([]byte(resource.Content))
 					media.Description = resource.Filename
 					medias = append(medias, *media)
 				} else if resource.Name != "" {
 					// 如果有资源名称，构建资源 URL
-					// 假设资源可以通过 Memos 的 API 端点访问
 					resourceURL := fmt.Sprintf("%s/file/%s/%s", m.Endpoint, resource.Name, resource.Filename)
 					media := NewMediaFromURL(resourceURL)
 					media.Description = resource.Filename
@@ -351,13 +423,19 @@ func (m *Memos) ListPosts(ctx context.Context, limit int) ([]*Post, error) {
 			visibility = VisibilityLevelPublic
 		}
 
+		// 使用 memo.Name 作为 OriginalID，向后兼容旧的 UID 字段
+		originalID := memo.Name
+		if memo.UID != "" {
+			originalID = memo.UID
+		}
+
 		post := &Post{
 			ID:             memo.Name,
 			Content:        memo.Content,
 			Visibility:     visibility,
 			Media:          medias,
 			SourcePlatform: m.name,
-			OriginalID:     memo.UID,
+			OriginalID:     originalID,
 			CreatedAt:      memo.CreateTime,
 		}
 		posts = append(posts, post)

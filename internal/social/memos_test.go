@@ -21,7 +21,7 @@ func TestMemos_ListMemos_Localhost(t *testing.T) {
 
 	memos := NewMemos(endpoint, token, "memos")
 
-	response, err := memos.ListMemos(context.Background(), nil)
+	response, err := memos.ListPosts(context.Background(), 10)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
@@ -31,10 +31,10 @@ func TestMemos_ListMemos_Localhost(t *testing.T) {
 		return
 	}
 
-	t.Logf("Successfully retrieved %d memos", len(response.Memos))
+	t.Logf("Successfully retrieved %d memos", len(response))
 
-	for _, memo := range response.Memos {
-		t.Logf("Memo: %+v, %+v, %+v", memo.Name, memo.CreateTime, len(memo.Resources))
+	for _, memo := range response{
+		t.Logf("Memo: %+v, %+v, %+v", memo.ID, memo.CreatedAt, len(memo.Media))
 	}
 
 	posts, err := memos.ListPosts(context.Background(), 10)
