@@ -40,12 +40,14 @@ func (c *ContentConverter) MemoToPost(memo *social.Memo) (*social.Post, error) {
 	}
 
 	// Create the post
+	// Memos doesn't have explicit reply support, so IsReply is false
 	post := &social.Post{
 		Content:        content,
 		Visibility:     visibility,
 		Media:          media,
 		SourcePlatform: social.PlatformMemos.String(),
 		OriginalID:     extractMemoID(memo.Name), // Extract ID from "memos/123" format
+		IsReply:        false,
 	}
 
 	return post, nil

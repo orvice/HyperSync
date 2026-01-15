@@ -172,6 +172,8 @@ func (m *Post) validate(all bool) error {
 		}
 	}
 
+	// no validation rules for IsReply
+
 	if len(errors) > 0 {
 		return PostMultiError(errors)
 	}

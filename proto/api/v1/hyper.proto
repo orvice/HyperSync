@@ -17,6 +17,7 @@ message Post {
   google.protobuf.Timestamp created_at = 8;
   google.protobuf.Timestamp updated_at = 9;
   map<string, CrossPostStatus> cross_post_status = 10;
+  bool is_reply = 11;
 }
 
 // CrossPostStatus tracks the status of a cross-post to a platform

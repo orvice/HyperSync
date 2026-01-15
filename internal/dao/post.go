@@ -54,6 +54,7 @@ type PostModel struct {
 	Visibility     string        `bson:"visibility"`
 	SourcePlatform string        `bson:"source_platform"`
 	OriginalID     string        `bson:"original_id"`
+	IsReply        bool          `bson:"is_reply"`
 	// Store media references instead of full data
 	MediaIDs  []string  `bson:"media_ids,omitempty"`
 	CreatedAt time.Time `bson:"created_at"`
@@ -79,6 +80,7 @@ func FromSocialPost(post *social.Post) *PostModel {
 		Visibility:     post.Visibility.String(), // Convert enum to string
 		SourcePlatform: post.SourcePlatform,
 		OriginalID:     post.OriginalID,
+		IsReply:        post.IsReply,
 		// Media will be stored separately
 		CreatedAt:       now,
 		UpdatedAt:       now,
@@ -101,6 +103,7 @@ func (p *PostModel) ToSocialPost() *social.Post {
 		Visibility:     visibility,
 		SourcePlatform: p.SourcePlatform,
 		OriginalID:     p.OriginalID,
+		IsReply:        p.IsReply,
 		// Media will need to be loaded separately
 	}
 }

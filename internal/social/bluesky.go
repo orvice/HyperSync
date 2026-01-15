@@ -322,11 +322,6 @@ func (b *BlueskyClient) DeletePost(ctx context.Context, rkey string) error {
 	logger.Info("deleting bluesky post", "rkey", rkey)
 
 	// 构造完整的 URI - at://did/app.bsky.feed.post/rkey
-	// 我们需要客户端的 DID 来构造完整的 URI
-	if b.client.Did == "" {
-		return fmt.Errorf("client DID not available")
-	}
-
 	postUri := fmt.Sprintf("at://%s/app.bsky.feed.post/%s", b.client.Did, rkey)
 	logger.Info("constructed post URI for deletion", "uri", postUri)
 
@@ -386,11 +381,15 @@ func (b *BlueskyClient) convertRichPostsToInternalPosts(ctx context.Context, ric
 			rkey = parts[len(parts)-1]
 		}
 
+		// 检查是否是回复 - 如果 Reply 字段不为 nil，则表示这是一条回复
+		isReply := richPost.Reply != nil
+
 		// 转换为我们的 Post 结构
 		post := &Post{
 			ID:             rkey,
 			Content:        richPost.Text,
 			SourcePlatform: PlatformBluesky.String(),
+			IsReply:        isReply,
 		}
 
 		// 处理媒体附件（如果有的话）
@@ -404,7 +403,8 @@ func (b *BlueskyClient) convertRichPostsToInternalPosts(ctx context.Context, ric
 			"index", i,
 			"rkey", rkey,
 			"content_length", len(post.Content),
-			"uri", richPost.Uri)
+			"uri", richPost.Uri,
+			"is_reply", isReply)
 	}
 
 	logger.Info("successfully converted rich posts", "final_count", len(posts))

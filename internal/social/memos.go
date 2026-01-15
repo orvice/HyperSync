@@ -429,6 +429,8 @@ func (m *Memos) ListPosts(ctx context.Context, limit int) ([]*Post, error) {
 			originalID = memo.UID
 		}
 
+		// Memos doesn't have explicit reply tracking, so IsReply is false by default
+		// In the future, we could check Relations field or Content format to detect replies
 		post := &Post{
 			ID:             memo.Name,
 			Content:        memo.Content,
@@ -437,6 +439,7 @@ func (m *Memos) ListPosts(ctx context.Context, limit int) ([]*Post, error) {
 			SourcePlatform: m.name,
 			OriginalID:     originalID,
 			CreatedAt:      memo.CreateTime,
+			IsReply:        false,
 		}
 		posts = append(posts, post)
 	}

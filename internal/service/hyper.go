@@ -99,6 +99,7 @@ func convertPostModelToProto(post *dao.PostModel) *v1.Post {
 		CreatedAt:       timestamppb.New(post.CreatedAt),
 		UpdatedAt:       timestamppb.New(post.UpdatedAt),
 		CrossPostStatus: make(map[string]*v1.CrossPostStatus),
+		IsReply:         post.IsReply,
 	}
 
 	for platform, status := range post.CrossPostStatus {

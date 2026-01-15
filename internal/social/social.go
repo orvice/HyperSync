@@ -355,6 +355,7 @@ type Post struct {
 	Media          []Media
 	SourcePlatform string
 	OriginalID     string
+	IsReply        bool
 
 	CreatedAt time.Time
 }

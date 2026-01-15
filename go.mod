@@ -4,6 +4,8 @@ go 1.23.4
 
 toolchain go1.24.3
 
+// replace github.com/gocql/gocql => github.com/scylladb/gocql
+
 require (
 	butterfly.orx.me/core v0.0.0-20250621160607-8cd37657d336
 	connectrpc.com/connect v1.18.1
@@ -13,7 +15,7 @@ require (
 	github.com/google/wire v0.6.0
 	github.com/mattn/go-mastodon v0.0.9
 	github.com/prometheus/client_golang v1.20.4
-	github.com/redis/go-redis/v9 v9.6.1
+	github.com/redis/go-redis/v9 v9.16.0
 	github.com/stretchr/testify v1.10.0
 	github.com/twitchtv/twirp v8.1.3+incompatible
 	go.mongodb.org/mongo-driver/v2 v2.0.0

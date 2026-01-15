@@ -108,10 +108,14 @@ func (c *MastodonClient) ListPosts(ctx context.Context, limit int) ([]*Post, err
 			visibility = VisibilityLevelPublic
 		}
 
+		// Check if this is a reply by examining InReplyToID
+		isReply := status.InReplyToID != nil
+
 		post := &Post{
 			ID:         string(status.ID),
 			Content:    status.Content,
 			Visibility: visibility,
+			IsReply:    isReply,
 		}
 		// Add media attachments if available
 		if len(status.MediaAttachments) > 0 {
