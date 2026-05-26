@@ -738,8 +738,7 @@ func (c *ThreadsClient) Post(ctx context.Context, post *Post) (interface{}, erro
 	// Check if visibility level is supported for Threads
 	if post.Visibility.IsValid() {
 		if !IsVisibilityLevelSupported(PlatformThreads.String(), post.Visibility) {
-			// Skip posting if visibility level is not supported
-			return nil, nil
+			return nil, fmt.Errorf("visibility %s is not supported by platform %s", post.Visibility.String(), PlatformThreads.String())
 		}
 	}
 

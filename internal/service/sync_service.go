@@ -2,11 +2,14 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"reflect"
 	"time"
 
 	"butterfly.orx.me/core/log"
 	"github.com/bsm/redislock"
 	"go.opentelemetry.io/otel/trace"
+	"go.orx.me/apps/hyper-sync/internal/conf"
 	"go.orx.me/apps/hyper-sync/internal/dao"
 	"go.orx.me/apps/hyper-sync/internal/metrics"
 	"go.orx.me/apps/hyper-sync/internal/social"
@@ -21,29 +24,30 @@ type SyncService struct {
 	metrics       *metrics.SyncMetrics
 	tracer        *telemetry.SyncTracer
 
-	mainSocail string
+	mainSocial string
 	socials    []string
 }
 
 func NewSyncService(dao dao.PostDao, socialService *SocialService, locker *redislock.Client,
-	mainSocail string, socials []string) (*SyncService, error) {
+	mainSocial string, socials []string) (*SyncService, error) {
 
 	return &SyncService{
 		locker:        locker,
-		mainSocail:    mainSocail,
+		mainSocial:    mainSocial,
 		socialService: socialService,
 		postDao:       dao,
 		socials:       socials,
-		metrics:       metrics.NewSyncMetrics(mainSocail),
-		tracer:        telemetry.NewSyncTracer(mainSocail),
+		metrics:       metrics.NewSyncMetrics(mainSocial),
+		tracer:        telemetry.NewSyncTracer(mainSocial),
 	}, nil
 }
 
 func (s *SyncService) Sync(ctx context.Context) error {
 	logger := log.FromContext(ctx)
-	lock, err := s.locker.Obtain(ctx, "sync_service", 2*time.Minute, nil)
+	lockKey := fmt.Sprintf("sync_service:%s", s.mainSocial)
+	lock, err := s.locker.Obtain(ctx, lockKey, 2*time.Minute, nil)
 	if err != nil {
-		logger.Info("Failed to obtain lock, skip sync", "error", err)
+		logger.Info("Failed to obtain lock, skip sync", "lock_key", lockKey, "error", err)
 		return nil
 	}
 	defer lock.Release(ctx)
@@ -57,12 +61,12 @@ func (s *SyncService) Sync(ctx context.Context) error {
 			err := s.doSync(ctx)
 			if err != nil {
 				s.tracer.SetSpanError(span, err, "sync_operation_failed", map[string]interface{}{
-					"main_social": s.mainSocail,
+					"main_social": s.mainSocial,
 				})
 				return err
 			}
 			s.tracer.SetSpanSuccess(span, map[string]interface{}{
-				"main_social": s.mainSocail,
+				"main_social": s.mainSocial,
 			})
 			return nil
 		})
@@ -72,24 +76,29 @@ func (s *SyncService) Sync(ctx context.Context) error {
 func (s *SyncService) doSync(ctx context.Context) error {
 	logger := log.FromContext(ctx)
 
-	mainSocial, err := s.socialService.GetPlatform(s.mainSocail)
+	mainSocial, err := s.socialService.GetPlatform(s.mainSocial)
 	if err != nil {
 		s.metrics.IncErrors("", metrics.ErrorTypePlatform)
 		return err
 	}
 
+	batchSize := 100
+	if conf.Conf.Sync != nil && conf.Conf.Sync.BatchSize > 0 {
+		batchSize = conf.Conf.Sync.BatchSize
+	}
+
 	// Fetch posts with tracing
-	ctx, fetchSpan := s.tracer.StartFetchPosts(ctx, 100)
+	ctx, fetchSpan := s.tracer.StartFetchPosts(ctx, batchSize)
 	var posts []*social.Post
 	err = s.metrics.TimedOperationWithContext(ctx, metrics.OperationFetchPosts, func(ctx context.Context) error {
 		var fetchErr error
-		posts, fetchErr = mainSocial.Client.ListPosts(ctx, 100)
+		posts, fetchErr = mainSocial.Client.ListPosts(ctx, batchSize)
 		return fetchErr
 	})
 
 	if err != nil {
 		s.tracer.SetSpanError(fetchSpan, err, "fetch_posts_failed", map[string]interface{}{
-			"platform": s.mainSocail,
+			"platform": s.mainSocial,
 		})
 		fetchSpan.End()
 		s.metrics.IncErrors("", metrics.ErrorTypePlatform)
@@ -98,7 +107,7 @@ func (s *SyncService) doSync(ctx context.Context) error {
 
 	s.tracer.SetSpanSuccess(fetchSpan, map[string]interface{}{
 		"posts_count": len(posts),
-		"platform":    s.mainSocail,
+		"platform":    s.mainSocial,
 	})
 	fetchSpan.End()
 
@@ -109,18 +118,25 @@ func (s *SyncService) doSync(ctx context.Context) error {
 	if span := trace.SpanFromContext(ctx); span.IsRecording() {
 		s.tracer.AddEvent(span, "posts_fetched", map[string]interface{}{
 			"count":    len(posts),
-			"platform": s.mainSocail,
+			"platform": s.mainSocial,
 		})
 	}
 
+	skipOlder := time.Hour
+	if conf.Conf.Sync != nil && conf.Conf.Sync.SkipOlder > 0 {
+		skipOlder = conf.Conf.Sync.SkipOlder
+	}
+
 	for _, post := range posts {
+		contentPreview := preview(post.Content, 50)
+
 		// Start span for processing individual post
-		ctx, postSpan := s.tracer.StartProcessPost(ctx, post.ID, post.Content[:min(50, len(post.Content))])
+		ctx, postSpan := s.tracer.StartProcessPost(ctx, post.ID, contentPreview)
 
-		logger.Info("Processing post", "post_id", post.ID, "content", post.Content[:min(50, len(post.Content))])
+		logger.Info("Processing post", "post_id", post.ID, "content", contentPreview)
 
-		// Skip old posts (older than 1 hour)
-		if post.CreatedAt.Before(time.Now().Add(-1 * time.Hour)) {
+		// Skip old posts
+		if post.CreatedAt.Before(time.Now().Add(-skipOlder)) {
 			logger.Debug("Post is too old, skipping", "post_id", post.ID, "created_at", post.CreatedAt)
 			s.metrics.IncPostsProcessed(metrics.StatusSkippedOld)
 			s.tracer.SetSpanSkipped(postSpan, "post_too_old", map[string]interface{}{
@@ -142,9 +158,9 @@ func (s *SyncService) doSync(ctx context.Context) error {
 
 		// Check if post already exists in database
 		ctx, dbSpan := s.tracer.StartDatabaseOperation(ctx, "get_post", post.ID)
-		postModel, err := s.postDao.GetBySocialAndSocialID(ctx, s.mainSocail, post.ID)
+		postModel, err := s.postDao.GetBySocialAndSocialID(ctx, s.mainSocial, post.ID)
 		if err != nil {
-			logger.Error("Error getting post from database", "error", err, "social", s.mainSocail, "social_id", post.ID)
+			logger.Error("Error getting post from database", "error", err, "social", s.mainSocial, "social_id", post.ID)
 			s.metrics.IncDatabaseOps(metrics.OperationGetPost, metrics.StatusError)
 			s.metrics.IncErrors("", metrics.ErrorTypeDatabase)
 			s.tracer.SetSpanError(dbSpan, err, "database_get_error", nil)
@@ -175,9 +191,9 @@ func (s *SyncService) doSync(ctx context.Context) error {
 			ctx, createSpan := s.tracer.StartDatabaseOperation(ctx, "create_post", post.ID)
 			postModel = dao.FromSocialPost(post)
 			// Override specific fields for sync service
-			postModel.Social = s.mainSocail
+			postModel.Social = s.mainSocial
 			postModel.SocialID = post.ID
-			postModel.SourcePlatform = s.mainSocail
+			postModel.SourcePlatform = s.mainSocial
 			postModel.OriginalID = post.ID
 			postModel.CreatedAt = post.CreatedAt
 			postModel.UpdatedAt = time.Now()
@@ -291,14 +307,7 @@ func (s *SyncService) doSync(ctx context.Context) error {
 				s.metrics.IncCrossPosts(targetSocial, metrics.StatusSuccess)
 
 				// Extract platform ID from response if available
-				var platformID string
-				if respMap, ok := response.(map[string]interface{}); ok {
-					if id, exists := respMap["id"]; exists {
-						if idStr, ok := id.(string); ok {
-							platformID = idStr
-						}
-					}
-				}
+				platformID := extractPlatformID(response)
 
 				s.tracer.SetSpanSuccess(crossPostSpan, map[string]interface{}{
 					"target_platform": targetSocial,
@@ -333,10 +342,55 @@ func (s *SyncService) doSync(ctx context.Context) error {
 	return nil
 }
 
-// min returns the smaller of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
+// preview returns a rune-safe content preview.
+func preview(s string, maxRunes int) string {
+	r := []rune(s)
+	if len(r) <= maxRunes {
+		return s
 	}
-	return b
+	return string(r[:maxRunes])
+}
+
+// extractPlatformID extracts a platform-specific post ID from common response shapes.
+func extractPlatformID(response interface{}) string {
+	if response == nil {
+		return ""
+	}
+
+	if respMap, ok := response.(map[string]interface{}); ok {
+		for _, key := range []string{"id", "uri", "rkey", "cid"} {
+			if value, exists := respMap[key]; exists {
+				if id := stringifyPlatformID(value); id != "" {
+					return id
+				}
+			}
+		}
+	}
+
+	value := reflect.Indirect(reflect.ValueOf(response))
+	if !value.IsValid() || value.Kind() != reflect.Struct {
+		return ""
+	}
+
+	for _, fieldName := range []string{"ID", "Id", "URI", "Uri", "RKey", "Rkey", "CID", "Cid"} {
+		field := value.FieldByName(fieldName)
+		if field.IsValid() && field.CanInterface() {
+			if id := stringifyPlatformID(field.Interface()); id != "" {
+				return id
+			}
+		}
+	}
+
+	return ""
+}
+
+func stringifyPlatformID(value interface{}) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case fmt.Stringer:
+		return v.String()
+	default:
+		return ""
+	}
 }

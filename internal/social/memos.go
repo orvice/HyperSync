@@ -341,8 +341,7 @@ func (m *Memos) Post(ctx context.Context, post *Post) (interface{}, error) {
 	// Check if visibility level is supported for Memos
 	if post.Visibility.IsValid() {
 		if !IsVisibilityLevelSupported(PlatformMemos.String(), post.Visibility) {
-			// Skip posting if visibility level is not supported
-			return nil, nil
+			return nil, fmt.Errorf("visibility %s is not supported by platform %s", post.Visibility.String(), PlatformMemos.String())
 		}
 		// Convert enum to Memos-specific visibility value
 		platformVisibility := GetPlatformVisibilityString(PlatformMemos.String(), post.Visibility)

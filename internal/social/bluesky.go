@@ -188,10 +188,9 @@ func (b *BlueskyClient) Post(ctx context.Context, post *Post) (interface{}, erro
 	// Check if visibility level is supported for Bluesky
 	if post.Visibility.IsValid() {
 		if !IsVisibilityLevelSupported(PlatformBluesky.String(), post.Visibility) {
-			// Skip posting if visibility level is not supported
-			logger.Info("visibility level not supported for bluesky, skipping.",
+			logger.Info("visibility level not supported for bluesky",
 				"visibility", post.Visibility)
-			return nil, nil
+			return nil, fmt.Errorf("visibility %s is not supported by platform %s", post.Visibility.String(), PlatformBluesky.String())
 		}
 	}
 

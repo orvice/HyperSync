@@ -214,9 +214,11 @@ func (d *MongoDAO) CreatePost(ctx context.Context, post *PostModel) (string, err
 	// Get the posts collection
 	collection := d.Client.Database(d.Database).Collection(postsCollection)
 
-	// Set timestamps
+	// Set timestamps. Preserve source creation time when it has already been set.
 	now := time.Now()
-	post.CreatedAt = now
+	if post.CreatedAt.IsZero() {
+		post.CreatedAt = now
+	}
 	post.UpdatedAt = now
 
 	// Insert the post

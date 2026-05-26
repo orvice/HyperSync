@@ -69,23 +69,32 @@ func InitTokenRefresh() error {
 	return nil
 }
 
-func runJob(mainSocail string, socials []string) error {
+func runJob(mainSocial string, socials []string) error {
 	logger := log.FromContext(context.Background())
-	logger.Info("Running job", "main_social", mainSocail, "socials", socials)
+	logger.Info("Running job", "main_social", mainSocial, "socials", socials)
 
-	syncService, err := wire.NewSyncService(mainSocail, socials)
+	syncService, err := wire.NewSyncService(mainSocial, socials)
 	if err != nil {
 		return err
 	}
 
+	interval := 30 * time.Second
+	if conf.Conf.Sync != nil && conf.Conf.Sync.Interval > 0 {
+		interval = conf.Conf.Sync.Interval
+	}
+
 	go func() {
+		ctx := context.Background()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
 		for {
-			err := syncService.Sync(context.Background())
+			err := syncService.Sync(ctx)
 			if err != nil {
 				logger.Error("Sync failed",
 					"error", err)
 			}
-			time.Sleep(30 * time.Second)
+			<-ticker.C
 		}
 	}()
 
