@@ -320,6 +320,10 @@ func (b *BlueskyClient) DeletePost(ctx context.Context, rkey string) error {
 
 	logger.Info("deleting bluesky post", "rkey", rkey)
 
+	if b.client == nil {
+		return fmt.Errorf("client not initialized")
+	}
+
 	// 构造完整的 URI - at://did/app.bsky.feed.post/rkey
 	// 我们需要客户端的 DID 来构造完整的 URI
 	if b.client.Did == "" {
@@ -343,6 +347,10 @@ func (b *BlueskyClient) DeletePost(ctx context.Context, rkey string) error {
 // ListPosts 获取当前用户的最新帖子
 func (b *BlueskyClient) ListPosts(ctx context.Context, limit int) ([]*Post, error) {
 	logger := log.FromContext(ctx)
+
+	if b.client == nil {
+		return nil, fmt.Errorf("client not initialized")
+	}
 
 	// 设置默认限制
 	if limit <= 0 {
