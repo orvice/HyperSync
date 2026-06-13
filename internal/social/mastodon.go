@@ -108,9 +108,11 @@ func (c *MastodonClient) ListPosts(ctx context.Context, limit int) ([]*Post, err
 		}
 
 		post := &Post{
-			ID:         string(status.ID),
-			Content:    status.Content,
-			Visibility: visibility,
+			ID:             string(status.ID),
+			Content:        status.Content,
+			Visibility:     visibility,
+			SourcePlatform: PlatformMastodon.String(),
+			CreatedAt:      status.CreatedAt,
 		}
 		// Add media attachments if available
 		if len(status.MediaAttachments) > 0 {

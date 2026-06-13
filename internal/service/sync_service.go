@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"time"
@@ -45,12 +46,38 @@ func NewSyncService(dao dao.PostDao, socialService *SocialService, locker *redis
 func (s *SyncService) Sync(ctx context.Context) error {
 	logger := log.FromContext(ctx)
 	lockKey := fmt.Sprintf("sync_service:%s", s.mainSocial)
-	lock, err := s.locker.Obtain(ctx, lockKey, 2*time.Minute, nil)
+	const lockTTL = 2 * time.Minute
+	lock, err := s.locker.Obtain(ctx, lockKey, lockTTL, nil)
 	if err != nil {
-		logger.Info("Failed to obtain lock, skip sync", "lock_key", lockKey, "error", err)
+		if errors.Is(err, redislock.ErrNotObtained) {
+			logger.Info("Lock held by another instance, skip sync", "lock_key", lockKey)
+		} else {
+			logger.Error("Failed to obtain lock, skip sync", "lock_key", lockKey, "error", err)
+		}
 		return nil
 	}
 	defer lock.Release(ctx)
+
+	// 后台看门狗：定期续期锁，防止 doSync 运行超过 TTL 后锁被其他实例抢占，
+	// 从而导致重复发帖。在 doSync 返回时停止续期。
+	stopRefresh := make(chan struct{})
+	defer close(stopRefresh)
+	go func() {
+		ticker := time.NewTicker(lockTTL / 2)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopRefresh:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := lock.Refresh(ctx, lockTTL, nil); err != nil {
+					logger.Warn("Failed to refresh sync lock", "lock_key", lockKey, "error", err)
+				}
+			}
+		}
+	}()
 
 	// Start the main sync operation span
 	ctx, span := s.tracer.StartSyncOperation(ctx)
@@ -125,6 +152,11 @@ func (s *SyncService) doSync(ctx context.Context) error {
 	skipOlder := time.Hour
 	if conf.Conf.Sync != nil && conf.Conf.Sync.SkipOlder > 0 {
 		skipOlder = conf.Conf.Sync.SkipOlder
+	}
+
+	maxRetries := 3
+	if conf.Conf.Sync != nil && conf.Conf.Sync.MaxRetries > 0 {
+		maxRetries = conf.Conf.Sync.MaxRetries
 	}
 
 	for _, post := range posts {
@@ -229,12 +261,22 @@ func (s *SyncService) doSync(ctx context.Context) error {
 
 		// Sync to other platforms
 		for _, targetSocial := range s.socials {
-			// Check if already synced successfully
+			// Check existing cross-post status
+			retryCount := 0
 			if postModel.CrossPostStatus != nil {
-				if status, exists := postModel.CrossPostStatus[targetSocial]; exists && status.Success && status.CrossPosted {
-					logger.Info("Post already synced successfully",
-						"post_id", post.ID, "target_platform", targetSocial)
-					continue
+				if status, exists := postModel.CrossPostStatus[targetSocial]; exists {
+					if status.Success && status.CrossPosted {
+						logger.Info("Post already synced successfully",
+							"post_id", post.ID, "target_platform", targetSocial)
+						continue
+					}
+					// 失败重试已达上限，放弃以避免无限重试
+					if status.RetryCount >= maxRetries {
+						logger.Warn("Post cross-post retries exhausted, giving up",
+							"post_id", post.ID, "target_platform", targetSocial, "retry_count", status.RetryCount)
+						continue
+					}
+					retryCount = status.RetryCount
 				}
 			}
 
@@ -259,6 +301,7 @@ func (s *SyncService) doSync(ctx context.Context) error {
 					Success:     false,
 					Error:       err.Error(),
 					CrossPosted: false,
+					RetryCount:  retryCount + 1,
 				}
 				if updateErr := s.postDao.UpdateCrossPostStatus(ctx, postID, targetSocial, status); updateErr != nil {
 					logger.Error("Error updating cross-post status", "error", updateErr, "post_id", postID, "platform", targetSocial)
@@ -295,6 +338,7 @@ func (s *SyncService) doSync(ctx context.Context) error {
 					Error:       err.Error(),
 					CrossPosted: false,
 					PostedAt:    &now,
+					RetryCount:  retryCount + 1,
 				}
 				if updateErr := s.postDao.UpdateCrossPostStatus(ctx, postID, targetSocial, status); updateErr != nil {
 					logger.Error("Error updating cross-post status", "error", updateErr, "post_id", postID, "platform", targetSocial)

@@ -21,6 +21,7 @@ func NewApp() *app.App {
 		Service: "hypersync",
 		Router:  http.Router,
 		InitFunc: []func() error{
+			InitIndexes,
 			InitJob,
 			InitTokenRefresh,
 		},
@@ -33,13 +34,33 @@ func main() {
 	app.Run()
 }
 
-func InitJob() error {
+// InitIndexes 在启动时确保数据库索引存在。
+// 索引创建失败（例如存量数据中已有重复）不应阻止服务启动，仅记录错误。
+func InitIndexes() error {
+	logger := log.FromContext(context.Background())
+	mongoDAO := wire.NewMongoDAO()
+	if err := mongoDAO.EnsureIndexes(context.Background()); err != nil {
+		logger.Error("Failed to ensure database indexes", "error", err)
+	}
+	return nil
+}
 
-	for _, social := range conf.Conf.Socials {
+func InitJob() error {
+	logger := log.FromContext(context.Background())
+
+	for name, social := range conf.Conf.Socials {
 		if len(social.SyncTo) == 0 {
 			continue
 		}
-		runJob(social.Name, social.SyncTo)
+		// social.Name 可能未在配置中显式设置，回退到 map key
+		mainSocial := social.Name
+		if mainSocial == "" {
+			mainSocial = name
+		}
+		if err := runJob(mainSocial, social.SyncTo); err != nil {
+			logger.Error("Failed to start sync job", "main_social", mainSocial, "error", err)
+			return err
+		}
 	}
 
 	return nil

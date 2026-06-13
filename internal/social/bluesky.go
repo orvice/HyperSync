@@ -9,6 +9,7 @@ import (
 	"image/png"
 	"os"
 	"strings"
+	"time"
 
 	"butterfly.orx.me/core/log"
 	"github.com/davhofer/botsky/pkg/botsky"
@@ -393,11 +394,21 @@ func (b *BlueskyClient) convertRichPostsToInternalPosts(ctx context.Context, ric
 			rkey = parts[len(parts)-1]
 		}
 
+		// 解析创建时间。优先使用客户端声明的 createdAt，其次 IndexedAt。
+		// 若都无法解析，回退到当前时间，避免被同步流程误判为过期而跳过。
+		createdAt := time.Now()
+		if t, err := time.Parse(time.RFC3339, richPost.CreatedAt); err == nil {
+			createdAt = t
+		} else if t, err := time.Parse(time.RFC3339, richPost.IndexedAt); err == nil {
+			createdAt = t
+		}
+
 		// 转换为我们的 Post 结构
 		post := &Post{
 			ID:             rkey,
 			Content:        richPost.Text,
 			SourcePlatform: PlatformBluesky.String(),
+			CreatedAt:      createdAt,
 		}
 
 		// 处理媒体附件（如果有的话）
