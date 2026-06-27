@@ -58,31 +58,33 @@ func (m *MockRedisClient) Obtain(ctx context.Context, key string, ttl time.Durat
 }
 
 func TestSchedulerService_GetTokenStatus(t *testing.T) {
-	// 创建模拟的 TokenManager
-	mockTokenManager := &MockTokenManager{}
-	mockRedisClient := &redislock.Client{}
+	newSchedulerService := func() (*SchedulerService, *MockTokenManager) {
+		mockTokenManager := &MockTokenManager{}
+		mockRedisClient := &redislock.Client{}
 
-	// 创建模拟的 SocialService
-	socialService := &SocialService{
-		platforms: map[string]*social.SocialPlatform{
-			"threads": {
-				Name: "threads",
-				Config: &social.PlatformConfig{
-					Type: "threads",
+		// 创建模拟的 SocialService
+		socialService := &SocialService{
+			platforms: map[string]*social.SocialPlatform{
+				"threads": {
+					Name: "threads",
+					Config: &social.PlatformConfig{
+						Type: "threads",
+					},
+				},
+				"mastodon": {
+					Name: "mastodon",
+					Config: &social.PlatformConfig{
+						Type: "mastodon",
+					},
 				},
 			},
-			"mastodon": {
-				Name: "mastodon",
-				Config: &social.PlatformConfig{
-					Type: "mastodon",
-				},
-			},
-		},
+		}
+
+		return NewSchedulerService(socialService, mockRedisClient, mockTokenManager), mockTokenManager
 	}
 
-	schedulerService := NewSchedulerService(socialService, mockRedisClient, mockTokenManager)
-
 	t.Run("should return token status for threads platform", func(t *testing.T) {
+		schedulerService, mockTokenManager := newSchedulerService()
 		ctx := context.Background()
 		expiresAt := time.Now().Add(30 * 24 * time.Hour) // 30 days from now
 
@@ -105,6 +107,7 @@ func TestSchedulerService_GetTokenStatus(t *testing.T) {
 	})
 
 	t.Run("should return token status for non-threads platform", func(t *testing.T) {
+		schedulerService, _ := newSchedulerService()
 		ctx := context.Background()
 
 		status, err := schedulerService.GetTokenStatus(ctx, "mastodon")
@@ -118,6 +121,7 @@ func TestSchedulerService_GetTokenStatus(t *testing.T) {
 	})
 
 	t.Run("should return error for unknown platform", func(t *testing.T) {
+		schedulerService, _ := newSchedulerService()
 		ctx := context.Background()
 
 		status, err := schedulerService.GetTokenStatus(ctx, "unknown")
@@ -128,6 +132,7 @@ func TestSchedulerService_GetTokenStatus(t *testing.T) {
 	})
 
 	t.Run("should handle token expiring soon", func(t *testing.T) {
+		schedulerService, mockTokenManager := newSchedulerService()
 		ctx := context.Background()
 		expiresAt := time.Now().Add(3 * 24 * time.Hour) // 3 days from now (within 7 day threshold)
 
@@ -148,6 +153,7 @@ func TestSchedulerService_GetTokenStatus(t *testing.T) {
 	})
 
 	t.Run("should handle expired token", func(t *testing.T) {
+		schedulerService, mockTokenManager := newSchedulerService()
 		ctx := context.Background()
 		expiresAt := time.Now().Add(-1 * time.Hour) // 1 hour ago (expired)
 
@@ -168,6 +174,7 @@ func TestSchedulerService_GetTokenStatus(t *testing.T) {
 	})
 
 	t.Run("should handle missing token", func(t *testing.T) {
+		schedulerService, mockTokenManager := newSchedulerService()
 		ctx := context.Background()
 
 		mockTokenManager.On("GetTokenInfo", ctx, "threads").Return(nil, nil)
