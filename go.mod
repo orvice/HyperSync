@@ -1,12 +1,10 @@
 module go.orx.me/apps/hyper-sync
 
-go 1.23.4
-
-toolchain go1.24.3
+go 1.25.0
 
 require (
 	butterfly.orx.me/core v0.0.0-20250621160607-8cd37657d336
-	connectrpc.com/connect v1.18.1
+	connectrpc.com/connect v1.20.0
 	github.com/bsm/redislock v0.9.4
 	github.com/davhofer/botsky v0.0.0-20250218025645-d30f6a2851dd
 	github.com/gin-gonic/gin v1.10.0
@@ -20,7 +18,7 @@ require (
 	go.opentelemetry.io/otel v1.35.0
 	go.opentelemetry.io/otel/trace v1.35.0
 	google.golang.org/grpc v1.71.0
-	google.golang.org/protobuf v1.36.5
+	google.golang.org/protobuf v1.36.11
 )
 
 require (
