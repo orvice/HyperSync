@@ -45,6 +45,20 @@ type PostDao interface {
 // Ensure MongoDAO implements PostDao interface
 var _ PostDao = (*MongoDAO)(nil)
 
+// EnsureIndexes 创建 posts 集合所需的索引。
+// (social, social_id) 唯一索引用于保证同一来源帖子去重，防止并发/重试导致重复记录。
+func (d *MongoDAO) EnsureIndexes(ctx context.Context) error {
+	collection := d.Client.Database(d.Database).Collection(postsCollection)
+	_, err := collection.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{
+			{Key: "social", Value: 1},
+			{Key: "social_id", Value: 1},
+		},
+		Options: options.Index().SetUnique(true).SetName("uniq_social_social_id"),
+	})
+	return err
+}
+
 // PostModel represents a post in the database
 type PostModel struct {
 	ID             bson.ObjectID `bson:"_id,omitempty"`
@@ -69,6 +83,7 @@ type CrossPostStatus struct {
 	PlatformID  string     `bson:"platform_id,omitempty"` // ID on the target platform
 	CrossPosted bool       `bson:"cross_posted"`
 	PostedAt    *time.Time `bson:"posted_at,omitempty"`
+	RetryCount  int        `bson:"retry_count,omitempty"` // 失败重试次数，用于限制无限重试
 }
 
 // FromSocialPost converts a social.Post to a PostModel
@@ -214,9 +229,11 @@ func (d *MongoDAO) CreatePost(ctx context.Context, post *PostModel) (string, err
 	// Get the posts collection
 	collection := d.Client.Database(d.Database).Collection(postsCollection)
 
-	// Set timestamps
+	// Set timestamps. Preserve source creation time when it has already been set.
 	now := time.Now()
-	post.CreatedAt = now
+	if post.CreatedAt.IsZero() {
+		post.CreatedAt = now
+	}
 	post.UpdatedAt = now
 
 	// Insert the post

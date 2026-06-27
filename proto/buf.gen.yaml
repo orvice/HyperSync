@@ -6,7 +6,7 @@ plugins:
   - remote: buf.build/grpc-ecosystem/gateway:v2.19.0
     out: ../pkg/proto
     opt: paths=source_relative
-  - remote: buf.build/connectrpc/go:v1.18.1
+  - remote: buf.build/connectrpc/go:v1.20.0
     out: ../pkg/proto 
     opt:
       - paths=source_relative

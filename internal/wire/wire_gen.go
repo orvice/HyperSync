@@ -13,7 +13,7 @@ import (
 
 // Injectors from wire.go:
 
-func NewSyncService(mainSocail string, socials []string) (*service.SyncService, error) {
+func NewSyncService(mainSocial string, socials []string) (*service.SyncService, error) {
 	client := dao.NewMongoClient()
 	postDao := dao.NewPostDao(client)
 	socialConfigDao := dao.NewSocialConfigDao(client)
@@ -24,7 +24,7 @@ func NewSyncService(mainSocail string, socials []string) (*service.SyncService, 
 	}
 	redisClient := dao.NewRedisClient()
 	redislockClient := dao.NewLocker(redisClient)
-	syncService, err := service.NewSyncService(postDao, socialService, redislockClient, mainSocail, socials)
+	syncService, err := service.NewSyncService(postDao, socialService, redislockClient, mainSocial, socials)
 	if err != nil {
 		return nil, err
 	}

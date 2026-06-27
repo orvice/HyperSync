@@ -10,7 +10,7 @@ import (
 	"go.orx.me/apps/hyper-sync/internal/social"
 )
 
-func NewSyncService(mainSocail string, socials []string) (*service.SyncService, error) {
+func NewSyncService(mainSocial string, socials []string) (*service.SyncService, error) {
 	panic(wire.Build(
 		dao.NewMongoClient,
 		dao.NewPostDao,

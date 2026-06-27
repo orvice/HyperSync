@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 	"time"
 
 	"butterfly.orx.me/core/log"
@@ -19,9 +20,25 @@ type ThreadsClient struct {
 	name         string
 	ClientID     string
 	ClientSecret string
-	AccessToken  string
 	UserID       int64
 	tokenManager TokenManager
+
+	mu          sync.RWMutex
+	accessToken string
+}
+
+// getAccessToken 以并发安全的方式读取 access token
+func (c *ThreadsClient) getAccessToken() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.accessToken
+}
+
+// setAccessToken 以并发安全的方式更新 access token
+func (c *ThreadsClient) setAccessToken(token string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.accessToken = token
 }
 
 // SetTokenManager sets the token manager for the client (useful for testing)
@@ -78,10 +95,10 @@ func NewThreadsClientWithDao(name string,
 
 		logger.Info("saved access token to dao,success", "name", client.name)
 
-		client.AccessToken = accessToken
+		client.setAccessToken(accessToken)
 	} else {
 		// dao 中有 access token，使用 dao 中的
-		client.AccessToken = existingToken
+		client.setAccessToken(existingToken)
 	}
 
 	return client, nil
@@ -111,7 +128,7 @@ func (c *ThreadsClient) EnsureValidToken(ctx context.Context) error {
 	}
 
 	// 更新客户端的 access token
-	c.AccessToken = tokenInfo.AccessToken
+	c.setAccessToken(tokenInfo.AccessToken)
 	logger.Debug("loaded access token from dao", "client", c.name)
 
 	// 如果没有过期时间信息，强制刷新token以获取正确的过期时间
@@ -214,7 +231,7 @@ func (c *ThreadsClient) SaveTokenToDao(ctx context.Context, tokenResp *TokenResp
 	}
 
 	// Update client's access token
-	c.AccessToken = tokenResp.AccessToken
+	c.setAccessToken(tokenResp.AccessToken)
 
 	logger.Info("access token saved successfully", "client", c.name)
 
@@ -274,7 +291,7 @@ func (c *ThreadsClient) ExchangeForLongLivedToken(shortLivedToken string) (*Toke
 	}
 
 	// 更新客户端的访问令牌
-	c.AccessToken = tokenResp.AccessToken
+	c.setAccessToken(tokenResp.AccessToken)
 
 	logger.Info("successfully exchanged token",
 		"client", c.name,
@@ -289,7 +306,8 @@ func (c *ThreadsClient) ExchangeForLongLivedToken(shortLivedToken string) (*Toke
 func (c *ThreadsClient) RefreshLongLivedToken() (*TokenResponse, error) {
 	logger := log.FromContext(context.Background())
 
-	if c.AccessToken == "" {
+	currentToken := c.getAccessToken()
+	if currentToken == "" {
 		logger.Error("access token is required for token refresh", "client", c.name)
 		return nil, fmt.Errorf("access token is required for token refresh")
 	}
@@ -300,7 +318,7 @@ func (c *ThreadsClient) RefreshLongLivedToken() (*TokenResponse, error) {
 	baseURL := "https://graph.threads.net/v1.0/refresh_access_token"
 	params := url.Values{}
 	params.Add("grant_type", "th_refresh_token")
-	params.Add("access_token", c.AccessToken)
+	params.Add("access_token", currentToken)
 
 	requestURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
 
@@ -336,7 +354,7 @@ func (c *ThreadsClient) RefreshLongLivedToken() (*TokenResponse, error) {
 	}
 
 	// 更新客户端的访问令牌
-	c.AccessToken = tokenResp.AccessToken
+	c.setAccessToken(tokenResp.AccessToken)
 
 	logger.Info("successfully refreshed token",
 		"client", c.name,
@@ -398,7 +416,8 @@ func (c *ThreadsClient) CreateMediaContainer(ctx context.Context, userID string,
 		}
 	}
 
-	if c.AccessToken == "" {
+	currentToken := c.getAccessToken()
+	if currentToken == "" {
 		logger.Error("access token is required", "client", c.name)
 		return nil, fmt.Errorf("access token is required")
 	}
@@ -417,7 +436,7 @@ func (c *ThreadsClient) CreateMediaContainer(ctx context.Context, userID string,
 
 	// 构建请求参数
 	params := url.Values{}
-	params.Add("access_token", c.AccessToken)
+	params.Add("access_token", currentToken)
 	params.Add("media_type", req.MediaType)
 
 	if req.Text != "" {
@@ -506,7 +525,8 @@ func (c *ThreadsClient) PublishMediaContainer(ctx context.Context, userID, conta
 		}
 	}
 
-	if c.AccessToken == "" {
+	currentToken := c.getAccessToken()
+	if currentToken == "" {
 		logger.Error("access token is required", "client", c.name)
 		return nil, fmt.Errorf("access token is required")
 	}
@@ -521,7 +541,7 @@ func (c *ThreadsClient) PublishMediaContainer(ctx context.Context, userID, conta
 
 	// 构建请求参数
 	params := url.Values{}
-	params.Add("access_token", c.AccessToken)
+	params.Add("access_token", currentToken)
 	params.Add("creation_id", containerID)
 
 	// 发送POST请求
@@ -738,8 +758,7 @@ func (c *ThreadsClient) Post(ctx context.Context, post *Post) (interface{}, erro
 	// Check if visibility level is supported for Threads
 	if post.Visibility.IsValid() {
 		if !IsVisibilityLevelSupported(PlatformThreads.String(), post.Visibility) {
-			// Skip posting if visibility level is not supported
-			return nil, nil
+			return nil, fmt.Errorf("visibility %s is not supported by platform %s", post.Visibility.String(), PlatformThreads.String())
 		}
 	}
 

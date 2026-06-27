@@ -9,6 +9,7 @@ import (
 	"image/png"
 	"os"
 	"strings"
+	"time"
 
 	"butterfly.orx.me/core/log"
 	"github.com/davhofer/botsky/pkg/botsky"
@@ -188,10 +189,9 @@ func (b *BlueskyClient) Post(ctx context.Context, post *Post) (interface{}, erro
 	// Check if visibility level is supported for Bluesky
 	if post.Visibility.IsValid() {
 		if !IsVisibilityLevelSupported(PlatformBluesky.String(), post.Visibility) {
-			// Skip posting if visibility level is not supported
-			logger.Info("visibility level not supported for bluesky, skipping.",
+			logger.Info("visibility level not supported for bluesky",
 				"visibility", post.Visibility)
-			return nil, nil
+			return nil, fmt.Errorf("visibility %s is not supported by platform %s", post.Visibility.String(), PlatformBluesky.String())
 		}
 	}
 
@@ -321,6 +321,10 @@ func (b *BlueskyClient) DeletePost(ctx context.Context, rkey string) error {
 
 	logger.Info("deleting bluesky post", "rkey", rkey)
 
+	if b.client == nil {
+		return fmt.Errorf("client not initialized")
+	}
+
 	// 构造完整的 URI - at://did/app.bsky.feed.post/rkey
 	// 我们需要客户端的 DID 来构造完整的 URI
 	if b.client.Did == "" {
@@ -344,6 +348,10 @@ func (b *BlueskyClient) DeletePost(ctx context.Context, rkey string) error {
 // ListPosts 获取当前用户的最新帖子
 func (b *BlueskyClient) ListPosts(ctx context.Context, limit int) ([]*Post, error) {
 	logger := log.FromContext(ctx)
+
+	if b.client == nil {
+		return nil, fmt.Errorf("client not initialized")
+	}
 
 	// 设置默认限制
 	if limit <= 0 {
@@ -386,11 +394,21 @@ func (b *BlueskyClient) convertRichPostsToInternalPosts(ctx context.Context, ric
 			rkey = parts[len(parts)-1]
 		}
 
+		// 解析创建时间。优先使用客户端声明的 createdAt，其次 IndexedAt。
+		// 若都无法解析，回退到当前时间，避免被同步流程误判为过期而跳过。
+		createdAt := time.Now()
+		if t, err := time.Parse(time.RFC3339, richPost.CreatedAt); err == nil {
+			createdAt = t
+		} else if t, err := time.Parse(time.RFC3339, richPost.IndexedAt); err == nil {
+			createdAt = t
+		}
+
 		// 转换为我们的 Post 结构
 		post := &Post{
 			ID:             rkey,
 			Content:        richPost.Text,
 			SourcePlatform: PlatformBluesky.String(),
+			CreatedAt:      createdAt,
 		}
 
 		// 处理媒体附件（如果有的话）

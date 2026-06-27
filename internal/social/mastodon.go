@@ -36,8 +36,7 @@ func (c *MastodonClient) Post(ctx context.Context, post *Post) (interface{}, err
 	// Check if visibility level is supported for Mastodon
 	if post.Visibility.IsValid() {
 		if !IsVisibilityLevelSupported(PlatformMastodon.String(), post.Visibility) {
-			// Skip posting if visibility level is not supported
-			return nil, nil
+			return nil, fmt.Errorf("visibility %s is not supported by platform %s", post.Visibility.String(), PlatformMastodon.String())
 		}
 	}
 
@@ -109,9 +108,11 @@ func (c *MastodonClient) ListPosts(ctx context.Context, limit int) ([]*Post, err
 		}
 
 		post := &Post{
-			ID:         string(status.ID),
-			Content:    status.Content,
-			Visibility: visibility,
+			ID:             string(status.ID),
+			Content:        status.Content,
+			Visibility:     visibility,
+			SourcePlatform: PlatformMastodon.String(),
+			CreatedAt:      status.CreatedAt,
 		}
 		// Add media attachments if available
 		if len(status.MediaAttachments) > 0 {
