@@ -1,6 +1,6 @@
 # HyperSync
 
-A multi-platform content synchronization tool that supports syncing content from Memos and other platforms to social networks like Mastodon and Bluesky.
+A multi-platform content synchronization service that syncs content from Memos to social networks like Mastodon, Bluesky, and Threads.
 
 ## Configuration
 
@@ -13,11 +13,10 @@ socials:
     name: memos
     type: memos
     enabled: true
-    sync_enabled: true
-    main: true
     sync_to:
-      - blueskey
+      - bluesky
       - mastodon
+      - threads
     memos:
       endpoint: https://your-memos-instance.com
       token: your_memos_access_token
@@ -27,27 +26,46 @@ socials:
     name: mastodon
     type: mastodon
     enabled: true
-    sync_enabled: true
     mastodon:
       instance: https://mastodon.world
       token: your_mastodon_access_token
 
   # Bluesky configuration
-  blueskey:
-    name: blueskey
+  bluesky:
+    name: bluesky
     type: bluesky
     enabled: true
-    sync_enabled: true
     bluesky:
       host: https://bsky.social
       handle: your-handle.bsky.social
       password: your_app_password
 
+  # Threads configuration
+  threads:
+    name: threads
+    type: threads
+    enabled: true
+    threads:
+      client_id: "your_client_id"
+      client_secret: "your_client_secret"
+      access_token: "your_access_token"
+      user_id: 1234567890
+
 # Data storage configuration
 store:
   mongo:
-    main: 
+    main:
       uri: "mongodb://localhost:27017/hypersync"
+  redis:
+    locker:
+      addr: "localhost:6379"
+
+# Optional: tune sync behavior (defaults shown)
+sync:
+  interval: 30s
+  batch_size: 100
+  skip_older: 1h
+  max_retries: 3
 ```
 
 ### Configuration Details
@@ -64,14 +82,22 @@ store:
   - `token`: Access token obtained from Mastodon
 
 - **bluesky**: Bluesky social network configuration
-  - `host`: Bluesky server address (usually bsky.social)
+  - `host`: Bluesky server address (usually `https://bsky.social`)
   - `handle`: Your Bluesky username
   - `password`: App-specific password
+
+- **threads**: Threads (Meta) configuration
+  - `client_id`: Meta app client ID
+  - `client_secret`: Meta app client secret (for token exchange)
+  - `access_token`: Initial access token (written to DB on first startup, then DB takes precedence)
+  - `user_id`: Your Threads user ID
 
 #### Storage Configuration
 
 - **mongo**: MongoDB database configuration
   - `uri`: MongoDB connection string
+- **redis**: Redis configuration (required for distributed locks)
+  - `addr`: Redis server address
 
 ### Getting Access Tokens
 
@@ -91,6 +117,11 @@ store:
 2. Go to Settings → App Passwords
 3. Create a new app password
 
+#### Threads
+1. Create a Meta app at [Meta for Developers](https://developers.facebook.com/)
+2. Configure Threads API permissions
+3. Obtain an access token via OAuth flow
+
 ## Running
 
 ```bash
@@ -98,5 +129,5 @@ store:
 make build
 
 # Run the service
-./bin/hypersync
+./bin/hyper-sync
 ```

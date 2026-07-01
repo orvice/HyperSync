@@ -29,6 +29,7 @@ erDiagram
         string platform_id "目标平台返回 ID"
         bool cross_posted
         time posted_at
+        int retry_count "失败重试次数"
     }
 
     SOCIAL_CONFIGS {
@@ -50,7 +51,7 @@ erDiagram
 
 Go 模型：`dao.PostModel`（`internal/dao/post.go:49`）。
 
-去重键：`(social, social_id)`，通过 `GetBySocialAndSocialID` 查询。
+去重键：`(social, social_id)`，通过 `GetBySocialAndSocialID` 查询。启动时 `InitIndexes` 会确保该唯一索引存在（`EnsureIndexes`）。
 
 每条 post 同时记录：
 - `source_platform` / `original_id`：源平台的视角（与 `social` / `social_id` 等价，因为 Sync 仅以 main social 作为 source）。
@@ -92,5 +93,5 @@ Go 模型：`dao.SyncRecordModel`（`internal/dao/sync_record.go:18`）。
 - 用途：分布式锁。
 - 客户端来源：`butterfly.orx.me/core/store/redis` 的 `"locker"` 配置项。
 - 锁键：
-  - `sync_service`：每个 Sync 周期 2 分钟 TTL（`sync_service.go:44`）。
-  - `token_refresh`：每个刷新周期 5 分钟 TTL（`scheduler_service.go:58`）。
+  - `sync_service:<mainSocial>`：每个源平台独立锁，2 分钟 TTL，且有锁续期 watchdog（每 TTL/2 刷新）。
+  - `token_refresh`：每个刷新周期 5 分钟 TTL（`scheduler_service.go`）。

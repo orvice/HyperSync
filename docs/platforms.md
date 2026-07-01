@@ -22,7 +22,7 @@
 
 Memos 的字符串值不同于其他平台：`PUBLIC` / `PROTECTED` / `PRIVATE`。`GetPlatformVisibilityString` 与 `ParsePlatformVisibility` 负责双向转换。
 
-跨发时如果目标平台不支持源帖子的可见性级别，对应平台客户端的 `Post` 会返回 `(nil, nil)` 静默跳过，**不会**记录错误。
+跨发时如果目标平台不支持源帖子的可见性级别，对应平台客户端的 `Post` 会返回错误（如 `"visibility unlisted is not supported by platform bluesky"`），该错误会被记录到 `CrossPostStatus.Error` 中。
 
 ## 平台实现细节
 

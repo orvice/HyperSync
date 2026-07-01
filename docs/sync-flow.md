@@ -1,6 +1,6 @@
 # 同步流程
 
-`SyncService.Sync` 是 HyperSync 的核心循环，每 30 秒触发一次。本文档描述一次 `doSync` 调用内部的全部步骤。
+`SyncService.Sync` 是 HyperSync 的核心循环，默认每 30 秒触发一次（可通过 `sync.interval` 配置）。本文档描述一次 `doSync` 调用内部的全部步骤。
 
 源代码：`internal/service/sync_service.go`。
 
@@ -15,17 +15,18 @@ sequenceDiagram
     participant DB as Mongo posts
     participant Tgt as Target Platform
 
-    loop 每 30s
+    loop 每 sync.interval (默认 30s)
         Main->>Sync: Sync(ctx)
-        Sync->>Lock: Obtain("sync_service", 2min)
+        Sync->>Lock: Obtain("sync_service:<mainSocial>", 2min)
         alt 抢锁失败
             Lock-->>Sync: err
             Sync-->>Main: nil (跳过本轮)
         else 抢锁成功
-            Sync->>Mem: ListPosts(100)
+            Note over Sync: 启动锁续期 watchdog (TTL/2 间隔)
+            Sync->>Mem: ListPosts(batch_size, 默认 100)
             Mem-->>Sync: []*Post
             loop 每条 post
-                Sync->>Sync: 过滤旧帖 (>1h)
+                Sync->>Sync: 过滤旧帖 (>skip_older, 默认 1h)
                 Sync->>Sync: 过滤 Direct 可见性
                 Sync->>DB: GetBySocialAndSocialID
                 alt 已存在
@@ -36,6 +37,7 @@ sequenceDiagram
                 end
                 loop 每个 target social
                     Sync->>Sync: 已成功同步? 跳过
+                    Sync->>Sync: 重试次数 >= max_retries? 放弃
                     Sync->>Tgt: Client.Post(post)
                     Tgt-->>Sync: response | err
                     Sync->>DB: UpdateCrossPostStatus(success/error)
@@ -50,13 +52,14 @@ sequenceDiagram
 
 | 规则 | 位置 | 行为 |
 | --- | --- | --- |
-| 30s 间隔 | `cmd/main.go:88` | `time.Sleep(30 * time.Second)` 硬编码 |
-| 分布式锁 TTL | `sync_service.go:44` | `2 * time.Minute`，单次 sync 超时会自动释放 |
-| 旧帖丢弃 | `sync_service.go:123` | `post.CreatedAt < now - 1h` → `StatusSkippedOld` |
-| Direct 私信丢弃 | `sync_service.go:135` | `Visibility == VisibilityLevelDirect` → `StatusSkippedDirect` |
-| 已同步跳过 | `sync_service.go:218` | `CrossPostStatus[target].Success && CrossPosted == true` → 跳过该目标 |
-
-注意：失败的目标在下一轮 Sync 中会被重试，没有 retry 次数上限。
+| 轮询间隔 | `cmd/main.go` | 默认 30s，可通过 `sync.interval` 配置 |
+| 分布式锁 key | `sync_service.go` | `sync_service:<mainSocial>`，每个源平台独立锁 |
+| 分布式锁 TTL | `sync_service.go` | `2 * time.Minute`，且有 **锁续期 watchdog**（每 TTL/2 刷新一次）防止长时间同步导致锁过期 |
+| 拉取上限 | `sync_service.go` | 默认 100，可通过 `sync.batch_size` 配置 |
+| 旧帖丢弃 | `sync_service.go` | `post.CreatedAt < now - skip_older`（默认 1h）→ `StatusSkippedOld` |
+| Direct 私信丢弃 | `sync_service.go` | `Visibility == VisibilityLevelDirect` → `StatusSkippedDirect` |
+| 已同步跳过 | `sync_service.go` | `CrossPostStatus[target].Success && CrossPosted == true` → 跳过该目标 |
+| 重试上限 | `sync_service.go` | 失败的目标在下一轮 Sync 中会被重试，重试次数达到 `max_retries`（默认 3）后放弃 |
 
 ## 状态字段
 
@@ -69,6 +72,7 @@ type CrossPostStatus struct {
     PlatformID  string
     CrossPosted bool
     PostedAt    *time.Time
+    RetryCount  int        // 失败重试次数，用于限制无限重试
 }
 ```
 
@@ -77,7 +81,7 @@ type CrossPostStatus struct {
 | Success | CrossPosted | 含义 |
 | --- | --- | --- |
 | true | true | 已成功投递，下一轮跳过 |
-| false | false（含 `PostedAt`） | 投递报错，下一轮重试 |
+| false | false（含 `PostedAt`） | 投递报错，下一轮重试（直到 `RetryCount >= max_retries`） |
 | false | false（无 `PostedAt`） | 平台初始化失败（GetPlatform 报错），下一轮重试 |
 
 ## 内容映射
@@ -108,6 +112,7 @@ sync_operation
 - `hyper_sync_database_ops_total{operation,status}`
 - `hyper_sync_errors_total{target_platform,error_type=platform_error|database_error|network_error}`
 - `hyper_sync_posts_in_queue` / `hyper_sync_active_operations` (gauge)
+- `hyper_sync_retries_total{target_platform}` (已定义，尚未在同步逻辑中递增)
 
 ## Token 刷新流程
 
@@ -135,4 +140,4 @@ stateDiagram-v2
     SkipNonThreads --> [*]
 ```
 
-刷新窗口（`threads.go:142`）：长期 token 过期前 7 天开始尝试刷新。刷新失败但 token 仍未过期时返回 `nil`（容忍）；只有已过期且刷新失败时才报错。
+刷新窗口（`threads.go:159`）：长期 token 过期前 7 天开始尝试刷新。刷新失败但 token 仍未过期时返回 `nil`（容忍）；只有已过期且刷新失败时才报错。

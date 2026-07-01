@@ -49,7 +49,7 @@ mastodon:
 
 ```yaml
 bluesky:
-  host: https://bsky.social   # 当前实现未使用，但保留字段
+  host: https://bsky.social   # 启动时校验非空，但 botsky 实际调用不使用
   handle: your-handle.bsky.social
   password: <app password>
 ```
@@ -98,7 +98,7 @@ socials:
     name: bluesky
     type: bluesky
     enabled: true
-    bluesky: { handle: me.bsky.social, password: <app-password> }
+    bluesky: { host: https://bsky.social, handle: me.bsky.social, password: <app-password> }
 
   threads:
     name: threads
@@ -111,14 +111,26 @@ socials:
       user_id: 1234567890
 ```
 
+## Sync 配置
+
+`conf.SyncConfig` 中以下字段已投入使用（默认值在代码中硬编码，配置文件可覆盖）：
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `interval` | duration | 30s | 同步轮询间隔（`cmd/main.go`） |
+| `batch_size` | int | 100 | 每次拉取帖子数量上限（`sync_service.go`） |
+| `skip_older` | duration | 1h | 跳过早于此时长的旧帖（`sync_service.go`） |
+| `max_retries` | int | 3 | 跨发失败最大重试次数（`sync_service.go`） |
+
+以下字段已定义但未被读取：`skip_private`、`max_memos_per_run`、`target_platforms`。
+
 ## 预留字段
 
 `conf.Config` 包含若干尚未投入使用的字段，列在这里以免误用：
 
 | 字段 | 状态 |
 | --- | --- |
-| `Sync` (SyncConfig) | 未读取，30s 间隔在 `cmd/main.go:88` 硬编码 |
-| `Scheduler` (SchedulerConfig) | 未读取，10 分钟间隔在 `cmd/main.go:64` 硬编码 |
+| `Scheduler` (SchedulerConfig) | 未读取，10 分钟间隔在 `cmd/main.go` 硬编码 |
 | `Webhook` (WebhookConfig) | 未读取 |
 | `Memos` (顶层 MemosConfig) | 未读取（实际使用 `socials.<name>.memos`） |
 | `Database` | 未读取（Mongo 由 `store.mongo.main` 提供） |

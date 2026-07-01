@@ -49,7 +49,7 @@ Name() string
 | `scheduler_service.go` | `SchedulerService` | Token 定时检查/刷新、`TokenStatus` 查询 |
 | `post_service.go` | `PostService` | 数据库视角的 Post CRUD 与 `SyncPost`/`StartSyncJob`（备用同步实现，目前 `cmd/main.go` 未启用） |
 | `content_converter.go` | `ContentConverter` | Memo → Post 转换的辅助方法（目前未直接被 SyncService 调用） |
-| `hyper.go` | `HyperService` | Proto 服务端实现（占位/未挂载到 HTTP） |
+| `hyper.go` | `HyperSyncService` | Proto 服务端实现（占位/未挂载到 HTTP） |
 
 ## `internal/dao/`
 
@@ -82,7 +82,7 @@ Google Wire DI。
 
 ## `internal/metrics/`
 
-- `sync_metrics.go` —— 8 个 Prometheus 指标定义（`hyper_sync_*`）。
+- `sync_metrics.go` —— 9 个 Prometheus 指标定义（`hyper_sync_*`，含 `hyper_sync_retries_total`）。
 - `helper.go` —— `SyncMetrics` 包装类型，提供 `IncPostsProcessed`/`IncCrossPosts`/`IncErrors`/`TimedOperationWithContext` 等高层 helper。
 
 ## `internal/telemetry/`

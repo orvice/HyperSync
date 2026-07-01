@@ -78,7 +78,7 @@ func InitTokenRefresh() error {
 	}
 
 	// 启动 token 刷新定时任务
-	// 每6小时检查一次 token 状态（可以根据需要调整间隔）
+	// 每10分钟检查一次 token 状态
 	go func() {
 		ctx := context.Background()
 		interval := time.Minute * 10
