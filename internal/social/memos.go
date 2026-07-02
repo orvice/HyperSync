@@ -338,19 +338,36 @@ func (m *Memos) Name() string {
 
 // Post implements SocialClient interface - posts content to Memos
 func (m *Memos) Post(ctx context.Context, post *Post) (interface{}, error) {
-	// Check if visibility level is supported for Memos
-	if post.Visibility.IsValid() {
-		if !IsVisibilityLevelSupported(PlatformMemos.String(), post.Visibility) {
-			return nil, fmt.Errorf("visibility %s is not supported by platform %s", post.Visibility.String(), PlatformMemos.String())
-		}
-		// Convert enum to Memos-specific visibility value
-		platformVisibility := GetPlatformVisibilityString(PlatformMemos.String(), post.Visibility)
-		// TODO: Use platformVisibility when implementing actual posting logic
-		_ = platformVisibility
+	visibility := GetPlatformVisibilityString(PlatformMemos.String(), post.Visibility)
+
+	memo, err := m.CreateMemo(ctx, &CreateMemoRequest{
+		Content:    post.Content,
+		Visibility: visibility,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("memos create: %w", err)
 	}
 
-	// TODO: Implement Memos posting logic
-	return nil, fmt.Errorf("Memos Post method not implemented yet")
+	return map[string]string{"id": memo.Name}, nil
+}
+
+// Update edits an existing memo.
+func (m *Memos) Update(ctx context.Context, platformID string, post *Post) error {
+	visibility := GetPlatformVisibilityString(PlatformMemos.String(), post.Visibility)
+
+	_, err := m.UpdateMemo(ctx, platformID, &UpdateMemoRequest{
+		Content:    post.Content,
+		Visibility: visibility,
+	})
+	if err != nil {
+		return fmt.Errorf("memos update: %w", err)
+	}
+	return nil
+}
+
+// Delete removes a memo.
+func (m *Memos) Delete(ctx context.Context, platformID string) error {
+	return m.DeleteMemo(ctx, platformID)
 }
 
 // ListPosts implements SocialClient interface - converts Memos to social Posts

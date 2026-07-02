@@ -315,6 +315,11 @@ func (b *BlueskyClient) Post(ctx context.Context, post *Post) (interface{}, erro
 	}, nil
 }
 
+// Delete implements SocialDeleter by delegating to DeletePost.
+func (b *BlueskyClient) Delete(ctx context.Context, platformID string) error {
+	return b.DeletePost(ctx, platformID)
+}
+
 // DeletePost 删除一条Bluesky帖子
 func (b *BlueskyClient) DeletePost(ctx context.Context, rkey string) error {
 	logger := log.FromContext(ctx)

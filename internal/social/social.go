@@ -348,6 +348,16 @@ type SocialClient interface {
 	Name() string
 }
 
+// SocialUpdater is an optional interface for platforms that support editing posts.
+type SocialUpdater interface {
+	Update(ctx context.Context, platformID string, post *Post) error
+}
+
+// SocialDeleter is an optional interface for platforms that support deleting posts.
+type SocialDeleter interface {
+	Delete(ctx context.Context, platformID string) error
+}
+
 type Post struct {
 	ID             string
 	Content        string

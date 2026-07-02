@@ -75,6 +75,27 @@ func (c *MastodonClient) Post(ctx context.Context, post *Post) (interface{}, err
 	return status, err
 }
 
+// Update edits an existing status on Mastodon.
+func (c *MastodonClient) Update(ctx context.Context, platformID string, post *Post) error {
+	platformVisibility := GetPlatformVisibilityString(PlatformMastodon.String(), post.Visibility)
+
+	toot := &mastodon.Toot{
+		Status:     post.Content,
+		Visibility: platformVisibility,
+	}
+
+	_, err := c.Client.UpdateStatus(ctx, toot, mastodon.ID(platformID))
+	if err != nil {
+		return fmt.Errorf("mastodon update: %w", err)
+	}
+	return nil
+}
+
+// Delete removes a status from Mastodon.
+func (c *MastodonClient) Delete(ctx context.Context, platformID string) error {
+	return c.Client.DeleteStatus(ctx, mastodon.ID(platformID))
+}
+
 // ListPosts retrieves the most recent posts for the authenticated user
 func (c *MastodonClient) ListPosts(ctx context.Context, limit int) ([]*Post, error) {
 	// Get the account information for the authenticated user
