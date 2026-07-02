@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"slices"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -53,6 +55,10 @@ func (s *PostService) CreatePost(ctx context.Context, req *connect.Request[v1.Cr
 	if p.Visibility == "" {
 		p.Visibility = "public"
 	}
+	if err := validatePostFields(p.Status, p.Visibility); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	p.SyncPending = p.Status == "published" && len(p.SyncTargets) > 0
 
 	created, err := s.store.Create(ctx, p)
 	if err != nil {
@@ -108,22 +114,40 @@ func (s *PostService) UpdatePost(ctx context.Context, req *connect.Request[v1.Up
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 
+	// Treat an empty visibility as "keep the current value" — proto3 cannot
+	// distinguish unset from empty, and "" would silently stop syncing.
+	visibility := req.Msg.Visibility
+	if visibility == "" {
+		visibility = existing.Visibility
+	}
+	if err := validatePostFields(existing.Status, visibility); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+
 	contentChanged := existing.Content != req.Msg.Content ||
-		existing.Visibility != req.Msg.Visibility
+		existing.Visibility != visibility ||
+		!slices.Equal(existing.MediaIDs, req.Msg.MediaIds)
+	targetsChanged := !slices.Equal(existing.SyncTargets, req.Msg.SyncTargets)
 
 	existing.Content = req.Msg.Content
-	existing.Visibility = req.Msg.Visibility
+	existing.Visibility = visibility
 	existing.MediaIDs = req.Msg.MediaIds
 	existing.SyncTargets = req.Msg.SyncTargets
 
-	// Mark already-synced platforms as needs_update when content changes on a published post
+	// Mark already-synced platforms as needs_update when content changes on a
+	// published post. Resetting the retry budget also gives permanently failed
+	// platforms a fresh chance after an edit.
 	if existing.Status == "published" && contentChanged {
 		for platform, status := range existing.CrossPostStatus {
 			if status.Success && status.PlatformID != "" {
 				status.NeedsUpdate = true
-				existing.CrossPostStatus[platform] = status
 			}
+			status.RetryCount = 0
+			existing.CrossPostStatus[platform] = status
 		}
+	}
+	if existing.Status == "published" && (contentChanged || targetsChanged) && len(existing.SyncTargets) > 0 {
+		existing.SyncPending = true
 	}
 
 	updated, err := s.store.Update(ctx, existing)
@@ -150,6 +174,7 @@ func (s *PostService) PublishPost(ctx context.Context, req *connect.Request[v1.P
 	}
 
 	existing.Status = "published"
+	existing.SyncPending = len(existing.SyncTargets) > 0
 	updated, err := s.store.Update(ctx, existing)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
@@ -185,6 +210,21 @@ func (s *PostService) DeletePost(ctx context.Context, req *connect.Request[v1.De
 	}
 
 	return connect.NewResponse(&v1.DeletePostResponse{}), nil
+}
+
+var (
+	validStatuses   = map[string]bool{"draft": true, "published": true}
+	validVisibility = map[string]bool{"public": true, "unlisted": true, "private": true, "direct": true}
+)
+
+func validatePostFields(status, visibility string) error {
+	if !validStatuses[status] {
+		return fmt.Errorf("invalid status %q", status)
+	}
+	if !validVisibility[visibility] {
+		return fmt.Errorf("invalid visibility %q", visibility)
+	}
+	return nil
 }
 
 func postToProto(p *post.Post) *v1.Post {

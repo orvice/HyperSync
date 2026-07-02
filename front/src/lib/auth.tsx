@@ -38,8 +38,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const handleStorage = (e: StorageEvent) => {
-      if (e.key === "token" && !e.newValue) {
-        setToken(null);
+      if (e.key === "token") {
+        setToken(e.newValue);
       }
     };
     window.addEventListener("storage", handleStorage);

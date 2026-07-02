@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -38,9 +40,19 @@ func NewMediaService(store media.Store, objectStorage media.ObjectStorage, cdnDo
 	}
 }
 
+// maxUploadBytes caps a single media upload (multipart overhead included).
+const maxUploadBytes = 50 << 20
+
 func (s *MediaService) HandleUpload(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
+
 	file, header, err := r.FormFile("file")
 	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			http.Error(w, "file too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "missing file", http.StatusBadRequest)
 		return
 	}
@@ -49,10 +61,18 @@ func (s *MediaService) HandleUpload(w http.ResponseWriter, r *http.Request) {
 	buf := make([]byte, 512)
 	n, _ := file.Read(buf)
 	contentType := http.DetectContentType(buf[:n])
-	file.Seek(0, 0)
+	if _, err := file.Seek(0, 0); err != nil {
+		http.Error(w, "upload failed", http.StatusInternalServerError)
+		return
+	}
 
-	if ext := extensionContentType(header.Filename); ext != "" {
-		contentType = ext
+	// The sniffed type is authoritative; the client-controlled filename only
+	// refines generic results (sniffing cannot identify e.g. SVG or WebM), so a
+	// script renamed to x.png cannot masquerade as an image.
+	if isGenericContentType(contentType) {
+		if ext := extensionContentType(header.Filename); ext != "" {
+			contentType = ext
+		}
 	}
 
 	key := fmt.Sprintf("media/%s/%s", time.Now().Format("2006/01/02"), uuid.New().String())
@@ -62,7 +82,7 @@ func (s *MediaService) HandleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cdnURL := fmt.Sprintf("%s/%s", s.cdnDomain, key)
+	cdnURL := fmt.Sprintf("%s/%s", strings.TrimSuffix(s.cdnDomain, "/"), key)
 
 	m := &media.Media{
 		S3Key:            key,
@@ -144,6 +164,14 @@ func (s *MediaService) DeleteMedia(ctx context.Context, req *connect.Request[v1.
 	return connect.NewResponse(&v1.DeleteMediaResponse{}), nil
 }
 
+// isGenericContentType reports whether sniffing failed to identify the payload
+// precisely enough to be useful as an object-storage content type.
+func isGenericContentType(ct string) bool {
+	return ct == "application/octet-stream" ||
+		strings.HasPrefix(ct, "text/plain") ||
+		strings.HasPrefix(ct, "text/xml")
+}
+
 func extensionContentType(filename string) string {
 	types := map[string]string{
 		".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -152,12 +180,7 @@ func extensionContentType(filename string) string {
 		".mp4": "video/mp4", ".webm": "video/webm",
 		".pdf": "application/pdf",
 	}
-	for ext, ct := range types {
-		if len(filename) > len(ext) && filename[len(filename)-len(ext):] == ext {
-			return ct
-		}
-	}
-	return ""
+	return types[strings.ToLower(filepath.Ext(filename))]
 }
 
 func mediaToProto(m *media.Media) *v1.Media {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"butterfly.orx.me/core"
@@ -12,6 +13,7 @@ import (
 	"go.orx.me/apps/hyper-sync/internal/conf"
 	"go.orx.me/apps/hyper-sync/internal/dao"
 	"go.orx.me/apps/hyper-sync/internal/http"
+	"go.orx.me/apps/hyper-sync/internal/media"
 	"go.orx.me/apps/hyper-sync/internal/post"
 	"go.orx.me/apps/hyper-sync/internal/service"
 	"go.orx.me/apps/hyper-sync/internal/social"
@@ -45,14 +47,12 @@ func InitAuth() error {
 	logger := log.FromContext(context.Background())
 
 	authConf := conf.Conf.Auth
-	if authConf == nil {
-		logger.Warn("No auth config found, using defaults")
-		return nil
+	if authConf == nil || authConf.JWTSecret == "" {
+		return errors.New("auth.jwt_secret must be configured; refusing to start with a forgeable JWT secret")
 	}
 
 	if authConf.Username == "" || authConf.Password == "" {
-		logger.Warn("Auth username/password not configured, skipping seed")
-		return nil
+		return errors.New("auth.username and auth.password must be configured to seed the initial user")
 	}
 
 	mongoClient := dao.NewMongoClient()
@@ -130,6 +130,10 @@ func InitPublishWorker() error {
 
 	mongoClient := dao.NewMongoClient()
 	postStore := post.NewMongoStore(mongoClient, "hypersync")
+	if err := postStore.EnsureIndexes(context.Background()); err != nil {
+		logger.Error("Failed to ensure managed post indexes", "error", err)
+	}
+	mediaStore := media.NewMongoStore(mongoClient, "hypersync")
 
 	socialService, err := wire.NewSocialServiceOnly()
 	if err != nil {
@@ -152,7 +156,7 @@ func InitPublishWorker() error {
 		interval = conf.Conf.Sync.Interval
 	}
 
-	worker := service.NewPublishWorker(postStore, clients, maxRetries)
+	worker := service.NewPublishWorker(postStore, mediaStore, clients, maxRetries)
 
 	go func() {
 		ctx := context.Background()

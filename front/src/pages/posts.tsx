@@ -11,16 +11,21 @@ export function PostsPage() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     loadPosts();
   }, []);
 
   const loadPosts = async () => {
+    setLoading(true);
+    setError("");
     try {
       const resp = await postClient.listPosts({ pageSize: 20, page: 1 });
       setPosts(resp.posts);
       setTotal(resp.total);
+    } catch {
+      setError("Failed to load posts.");
     } finally {
       setLoading(false);
     }
@@ -54,6 +59,11 @@ export function PostsPage() {
 
       {loading ? (
         <p className="text-muted-foreground">Loading...</p>
+      ) : error ? (
+        <div className="space-y-3">
+          <p className="text-sm text-destructive">{error}</p>
+          <Button variant="outline" onClick={loadPosts}>Retry</Button>
+        </div>
       ) : posts.length === 0 ? (
         <p className="text-muted-foreground">No posts yet. Create your first post!</p>
       ) : (

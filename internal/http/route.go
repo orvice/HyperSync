@@ -1,6 +1,8 @@
 package http
 
 import (
+	"log/slog"
+
 	"connectrpc.com/connect"
 	"github.com/gin-gonic/gin"
 
@@ -25,14 +27,16 @@ func Router(r *gin.Engine) {
 		})
 	})
 
+	jwtSecret := requireJWTSecret()
+
 	// ConnectRPC services
-	mountConnectRPC(r)
+	mountConnectRPC(r, jwtSecret)
 
 	// API routes
 	api := r.Group("/api")
 	{
-		// Token management routes
-		tokenRoutes := api.Group("/token")
+		// Token management routes mutate platform state — same JWT as the RPCs.
+		tokenRoutes := api.Group("/token", auth.GinMiddleware(jwtSecret))
 		{
 			schedulerService, err := wire.NewSchedulerService()
 			if err != nil {
@@ -48,21 +52,26 @@ func Router(r *gin.Engine) {
 	}
 }
 
-func mountConnectRPC(r *gin.Engine) {
+// requireJWTSecret fails startup when no usable JWT secret is configured. A
+// missing or empty secret must never silently fall back to a known constant —
+// that would make every token forgeable.
+func requireJWTSecret() string {
 	authConf := conf.Conf.Auth
-	if authConf == nil {
-		authConf = &conf.AuthConfig{
-			Username:  "admin",
-			Password:  "admin",
-			JWTSecret: "change-me-in-production",
-		}
+	if authConf == nil || authConf.JWTSecret == "" {
+		panic("auth.jwt_secret must be configured; refusing to start with a forgeable JWT secret")
 	}
+	if len(authConf.JWTSecret) < 32 {
+		slog.Warn("auth.jwt_secret is shorter than 32 characters; use a longer random secret")
+	}
+	return authConf.JWTSecret
+}
 
+func mountConnectRPC(r *gin.Engine, jwtSecret string) {
 	mongoClient := dao.NewMongoClient()
 	userStore := auth.NewMongoUserStore(mongoClient, "hypersync")
-	interceptor := auth.NewAuthInterceptor(authConf.JWTSecret)
+	interceptor := auth.NewAuthInterceptor(jwtSecret)
 
-	authService := service.NewAuthService(userStore, authConf.JWTSecret)
+	authService := service.NewAuthService(userStore, jwtSecret)
 	authPath, authHandler := v1connect.NewAuthServiceHandler(authService, connect.WithInterceptors(interceptor))
 	r.Any(authPath+"*path", gin.WrapH(authHandler))
 
@@ -76,6 +85,8 @@ func mountConnectRPC(r *gin.Engine) {
 			clients[name] = platform.Client
 		}
 		postOpts = append(postOpts, service.WithPlatformDeleter(service.NewSocialPlatformDeleter(clients)))
+	} else {
+		slog.Error("social service unavailable, cascade platform delete disabled", "error", err)
 	}
 
 	postService := service.NewPostService(postStore, postOpts...)
@@ -103,5 +114,5 @@ func mountConnectRPC(r *gin.Engine) {
 	mediaService := service.NewMediaService(mediaStore, objectStorage, cdnDomain)
 	mediaPath, mediaHandler := v1connect.NewMediaServiceHandler(mediaService, connect.WithInterceptors(interceptor))
 	r.Any(mediaPath+"*path", gin.WrapH(mediaHandler))
-	r.POST("/api/media/upload", gin.WrapF(mediaService.HandleUpload))
+	r.POST("/api/media/upload", auth.GinMiddleware(jwtSecret), gin.WrapF(mediaService.HandleUpload))
 }

@@ -18,7 +18,14 @@ export async function uploadMedia(file: File): Promise<UploadResult> {
   });
 
   if (!resp.ok) {
-    throw new Error("Upload failed");
+    if (resp.status === 401) {
+      localStorage.removeItem("token");
+      localStorage.removeItem("token_expires_at");
+      if (window.location.pathname !== "/login") {
+        window.location.href = "/login";
+      }
+    }
+    throw new Error(`Upload failed: ${resp.status}`);
   }
 
   return resp.json();

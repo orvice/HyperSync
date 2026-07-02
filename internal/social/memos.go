@@ -355,7 +355,9 @@ func (m *Memos) Post(ctx context.Context, post *Post) (interface{}, error) {
 func (m *Memos) Update(ctx context.Context, platformID string, post *Post) error {
 	visibility := GetPlatformVisibilityString(PlatformMemos.String(), post.Visibility)
 
-	_, err := m.UpdateMemo(ctx, platformID, &UpdateMemoRequest{
+	// Post() stores memo.Name ("memos/{uid}"); the endpoints already include the
+	// "memos/" segment, so strip it to avoid /api/v1/memos/memos/{uid}.
+	_, err := m.UpdateMemo(ctx, strings.TrimPrefix(platformID, "memos/"), &UpdateMemoRequest{
 		Content:    post.Content,
 		Visibility: visibility,
 	})
@@ -367,7 +369,7 @@ func (m *Memos) Update(ctx context.Context, platformID string, post *Post) error
 
 // Delete removes a memo.
 func (m *Memos) Delete(ctx context.Context, platformID string) error {
-	return m.DeleteMemo(ctx, platformID)
+	return m.DeleteMemo(ctx, strings.TrimPrefix(platformID, "memos/"))
 }
 
 // ListPosts implements SocialClient interface - converts Memos to social Posts

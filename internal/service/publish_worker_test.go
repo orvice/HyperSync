@@ -50,7 +50,7 @@ func (m *mockSocialClient) Update(_ context.Context, platformID string, p *socia
 func setupPublishWorkerTest(t *testing.T, clients map[string]social.SocialClient) (*service.PublishWorker, *post.MemoryStore) {
 	t.Helper()
 	store := post.NewMemoryStore()
-	worker := service.NewPublishWorker(store, clients, 3)
+	worker := service.NewPublishWorker(store, nil, clients, 3)
 	return worker, store
 }
 
@@ -65,6 +65,7 @@ func TestPublishWorker_PublishesPendingPost(t *testing.T) {
 		Content:     "Hello world",
 		Visibility:  "public",
 		Status:      "published",
+		SyncPending: true,
 		SyncTargets: []string{"mastodon"},
 		CrossPostStatus: map[string]post.CrossPostStatus{
 			"mastodon": {Success: false},
@@ -99,6 +100,7 @@ func TestPublishWorker_SkipsPrivateAndDirectPosts(t *testing.T) {
 			Content:     "secret " + vis,
 			Visibility:  vis,
 			Status:      "published",
+			SyncPending: true,
 			SyncTargets: []string{"mastodon"},
 			CrossPostStatus: map[string]post.CrossPostStatus{
 				"mastodon": {Success: false},
@@ -125,6 +127,7 @@ func TestPublishWorker_RetriesFailedPostsUpToMax(t *testing.T) {
 		Content:     "will retry",
 		Visibility:  "public",
 		Status:      "published",
+		SyncPending: true,
 		SyncTargets: []string{"mastodon"},
 		CrossPostStatus: map[string]post.CrossPostStatus{
 			"mastodon": {Success: false, RetryCount: 2},
@@ -137,6 +140,7 @@ func TestPublishWorker_RetriesFailedPostsUpToMax(t *testing.T) {
 		Content:     "exhausted retries",
 		Visibility:  "public",
 		Status:      "published",
+		SyncPending: true,
 		SyncTargets: []string{"mastodon"},
 		CrossPostStatus: map[string]post.CrossPostStatus{
 			"mastodon": {Success: false, RetryCount: 3},
@@ -163,6 +167,7 @@ func TestPublishWorker_SkipsAlreadySyncedPlatforms(t *testing.T) {
 		Content:     "partial sync",
 		Visibility:  "public",
 		Status:      "published",
+		SyncPending: true,
 		SyncTargets: []string{"mastodon", "bluesky"},
 		CrossPostStatus: map[string]post.CrossPostStatus{
 			"mastodon": {Success: true, PlatformID: "already-done"},
@@ -190,6 +195,7 @@ func TestPublishWorker_NeedsUpdate_CallsUpdate(t *testing.T) {
 		Content:     "Updated content",
 		Visibility:  "public",
 		Status:      "published",
+		SyncPending: true,
 		SyncTargets: []string{"mastodon"},
 		CrossPostStatus: map[string]post.CrossPostStatus{
 			"mastodon": {Success: true, PlatformID: "masto-123", NeedsUpdate: true},
@@ -217,6 +223,7 @@ func TestPublishWorker_NeedsUpdate_ClearsFlag(t *testing.T) {
 		Content:     "Updated content",
 		Visibility:  "public",
 		Status:      "published",
+		SyncPending: true,
 		SyncTargets: []string{"mastodon"},
 		CrossPostStatus: map[string]post.CrossPostStatus{
 			"mastodon": {Success: true, PlatformID: "masto-123", NeedsUpdate: true},

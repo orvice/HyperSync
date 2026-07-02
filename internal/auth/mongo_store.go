@@ -5,6 +5,7 @@ import (
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 const usersCollection = "users"
@@ -52,17 +53,24 @@ func (s *MongoUserStore) Create(ctx context.Context, user *User) error {
 }
 
 func (s *MongoUserStore) UpdatePassword(ctx context.Context, username string, newHash string) error {
-	_, err := s.collection().UpdateOne(
+	result, err := s.collection().UpdateOne(
 		ctx,
 		bson.M{"username": username},
 		bson.M{"$set": bson.M{"password_hash": newHash}},
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	if result.MatchedCount == 0 {
+		return ErrUserNotFound
+	}
+	return nil
 }
 
 func (s *MongoUserStore) EnsureIndexes(ctx context.Context) error {
 	_, err := s.collection().Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys: bson.D{{Key: "username", Value: 1}},
+		Keys:    bson.D{{Key: "username", Value: 1}},
+		Options: options.Index().SetUnique(true),
 	})
 	return err
 }

@@ -15,14 +15,16 @@ interface MediaUploadProps {
 
 export function MediaUpload({ value, onChange }: MediaUploadProps) {
   const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     setUploading(true);
+    setError("");
 
+    const newItems: MediaItem[] = [];
     try {
-      const newItems: MediaItem[] = [];
       for (const file of Array.from(files)) {
         const result = await uploadMedia(file);
         newItems.push({
@@ -31,8 +33,12 @@ export function MediaUpload({ value, onChange }: MediaUploadProps) {
           contentType: result.content_type,
         });
       }
-      onChange([...value, ...newItems]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed");
     } finally {
+      if (newItems.length > 0) {
+        onChange([...value, ...newItems]);
+      }
       setUploading(false);
       if (inputRef.current) inputRef.current.value = "";
     }
@@ -84,6 +90,8 @@ export function MediaUpload({ value, onChange }: MediaUploadProps) {
       >
         {uploading ? "Uploading..." : "Add Media"}
       </Button>
+
+      {error && <p className="text-sm text-destructive">{error}</p>}
     </div>
   );
 }

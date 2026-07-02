@@ -9,7 +9,9 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
-const collection = "posts"
+// The legacy sync DAO owns "posts" (with a unique index on social/social_id
+// that would reject managed posts), so managed posts get their own collection.
+const collection = "managed_posts"
 
 type MongoStore struct {
 	client   *mongo.Client
@@ -112,12 +114,67 @@ func (s *MongoStore) Update(ctx context.Context, p *Post) (*Post, error) {
 	doc := toDocument(p)
 	doc.ID = oid
 
-	_, err = s.col().ReplaceOne(ctx, bson.M{"_id": oid}, doc)
+	result, err := s.col().ReplaceOne(ctx, bson.M{"_id": oid}, doc)
 	if err != nil {
 		return nil, err
 	}
+	if result.MatchedCount == 0 {
+		return nil, ErrNotFound
+	}
 
 	return fromDocument(doc), nil
+}
+
+func (s *MongoStore) UpdateSyncStatus(ctx context.Context, id, platform string, status CrossPostStatus) error {
+	oid, err := bson.ObjectIDFromHex(id)
+	if err != nil {
+		return ErrNotFound
+	}
+
+	update := bson.M{"$set": bson.M{
+		"cross_post_status." + platform: crossPostStatusDoc{
+			Success:     status.Success,
+			Error:       status.Error,
+			PlatformID:  status.PlatformID,
+			PostedAt:    status.PostedAt,
+			RetryCount:  status.RetryCount,
+			NeedsUpdate: status.NeedsUpdate,
+		},
+	}}
+
+	result, err := s.col().UpdateOne(ctx, bson.M{"_id": oid}, update)
+	if err != nil {
+		return err
+	}
+	if result.MatchedCount == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *MongoStore) SetSyncPending(ctx context.Context, id string, pending bool) error {
+	oid, err := bson.ObjectIDFromHex(id)
+	if err != nil {
+		return ErrNotFound
+	}
+
+	result, err := s.col().UpdateOne(ctx, bson.M{"_id": oid}, bson.M{"$set": bson.M{"sync_pending": pending}})
+	if err != nil {
+		return err
+	}
+	if result.MatchedCount == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// EnsureIndexes creates the indexes the worker's pending-sync query relies on.
+func (s *MongoStore) EnsureIndexes(ctx context.Context) error {
+	_, err := s.col().Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{Keys: bson.D{{Key: "sync_pending", Value: 1}, {Key: "status", Value: 1}}},
+		{Keys: bson.D{{Key: "status", Value: 1}, {Key: "created_at", Value: -1}}},
+	})
+	return err
 }
 
 func (s *MongoStore) Delete(ctx context.Context, id string) error {
@@ -137,15 +194,19 @@ func (s *MongoStore) Delete(ctx context.Context, id string) error {
 }
 
 func (s *MongoStore) ListPendingSync(ctx context.Context) ([]*Post, error) {
-	// Find published posts with sync targets that have either:
-	// - a platform not yet synced (success=false, retry < max)
-	// - a platform that needs an update (needs_update=true)
+	// Only posts flagged sync_pending by the service/worker; bounded batch so a
+	// backlog cannot turn every tick into a full-collection scan.
 	filter := bson.M{
 		"status":       "published",
+		"sync_pending": true,
 		"sync_targets": bson.M{"$exists": true, "$ne": bson.A{}},
 	}
 
-	cursor, err := s.col().Find(ctx, filter)
+	findOpts := options.Find().
+		SetSort(bson.D{{Key: "updated_at", Value: 1}}).
+		SetLimit(200)
+
+	cursor, err := s.col().Find(ctx, filter, findOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -164,15 +225,16 @@ func (s *MongoStore) ListPendingSync(ctx context.Context) ([]*Post, error) {
 }
 
 type postDocument struct {
-	ID              bson.ObjectID                  `bson:"_id,omitempty"`
-	Content         string                         `bson:"content"`
-	Visibility      string                         `bson:"visibility"`
-	Status          string                         `bson:"status"`
-	MediaIDs        []string                       `bson:"media_ids,omitempty"`
-	SyncTargets     []string                       `bson:"sync_targets,omitempty"`
-	CrossPostStatus map[string]crossPostStatusDoc  `bson:"cross_post_status,omitempty"`
-	CreatedAt       time.Time                      `bson:"created_at"`
-	UpdatedAt       time.Time                      `bson:"updated_at"`
+	ID              bson.ObjectID                 `bson:"_id,omitempty"`
+	Content         string                        `bson:"content"`
+	Visibility      string                        `bson:"visibility"`
+	Status          string                        `bson:"status"`
+	MediaIDs        []string                      `bson:"media_ids,omitempty"`
+	SyncTargets     []string                      `bson:"sync_targets,omitempty"`
+	CrossPostStatus map[string]crossPostStatusDoc `bson:"cross_post_status,omitempty"`
+	SyncPending     bool                          `bson:"sync_pending"`
+	CreatedAt       time.Time                     `bson:"created_at"`
+	UpdatedAt       time.Time                     `bson:"updated_at"`
 }
 
 type crossPostStatusDoc struct {
@@ -191,6 +253,7 @@ func toDocument(p *Post) *postDocument {
 		Status:      p.Status,
 		MediaIDs:    p.MediaIDs,
 		SyncTargets: p.SyncTargets,
+		SyncPending: p.SyncPending,
 		CreatedAt:   p.CreatedAt,
 		UpdatedAt:   p.UpdatedAt,
 	}
@@ -221,6 +284,7 @@ func fromDocument(doc *postDocument) *Post {
 		MediaIDs:        doc.MediaIDs,
 		SyncTargets:     doc.SyncTargets,
 		CrossPostStatus: make(map[string]CrossPostStatus),
+		SyncPending:     doc.SyncPending,
 		CreatedAt:       doc.CreatedAt,
 		UpdatedAt:       doc.UpdatedAt,
 	}

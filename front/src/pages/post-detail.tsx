@@ -10,6 +10,7 @@ export function PostDetailPage() {
   const navigate = useNavigate();
   const [post, setPost] = useState<Post | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     if (!id) return;
@@ -17,11 +18,12 @@ export function PostDetailPage() {
   }, [id]);
 
   const loadPost = async () => {
+    setError("");
     try {
       const resp = await postClient.getPost({ id: id! });
       setPost(resp.post!);
     } catch {
-      navigate("/");
+      setError("Failed to load post. It may not exist or the server is unavailable.");
     } finally {
       setLoading(false);
     }
@@ -29,11 +31,12 @@ export function PostDetailPage() {
 
   const handlePublish = async () => {
     if (!post) return;
+    setError("");
     try {
       const resp = await postClient.publishPost({ id: post.id });
       setPost(resp.post!);
     } catch {
-      // handle error
+      setError("Failed to publish post. Please try again.");
     }
   };
 
@@ -49,16 +52,24 @@ export function PostDetailPage() {
       : "Delete this post?";
 
     if (!confirm(msg)) return;
+    setError("");
     try {
       await postClient.deletePost({ id: post.id });
       navigate("/");
     } catch {
-      // handle error
+      setError("Failed to delete post. Please try again.");
     }
   };
 
   if (loading) return <p className="p-8 text-muted-foreground">Loading...</p>;
-  if (!post) return null;
+  if (!post) {
+    return (
+      <div className="min-h-screen p-8 max-w-2xl mx-auto">
+        <Button variant="ghost" onClick={() => navigate("/")} className="mb-4">&larr; Back</Button>
+        <p className="text-sm text-destructive">{error || "Post not found."}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen p-8 max-w-2xl mx-auto">
@@ -110,6 +121,8 @@ export function PostDetailPage() {
               </div>
             </div>
           )}
+
+          {error && <p className="text-sm text-destructive">{error}</p>}
 
           <div className="flex gap-3 pt-4 border-t">
             <Link to={`/posts/${post.id}/edit`}>

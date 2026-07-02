@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"connectrpc.com/connect"
@@ -24,9 +25,14 @@ func NewAuthService(userStore auth.UserStore, jwtSecret string) *AuthService {
 	}
 }
 
+// dummyHash keeps the not-found path doing a bcrypt comparison so response
+// timing does not reveal whether a username exists.
+var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("dummy-password-for-timing"), bcrypt.DefaultCost)
+
 func (s *AuthService) Login(ctx context.Context, req *connect.Request[v1.LoginRequest]) (*connect.Response[v1.LoginResponse], error) {
 	user, err := s.userStore.GetByUsername(ctx, req.Msg.Username)
 	if err != nil {
+		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(req.Msg.Password))
 		return nil, connect.NewError(connect.CodeUnauthenticated, nil)
 	}
 
@@ -63,7 +69,11 @@ func (s *AuthService) ChangePassword(ctx context.Context, req *connect.Request[v
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Msg.CurrentPassword)); err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, nil)
+		return nil, connect.NewError(connect.CodeUnauthenticated, nil)
+	}
+
+	if len(req.Msg.NewPassword) < 8 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("new password must be at least 8 characters"))
 	}
 
 	newHash, err := bcrypt.GenerateFromPassword([]byte(req.Msg.NewPassword), bcrypt.DefaultCost)
