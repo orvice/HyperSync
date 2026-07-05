@@ -2,7 +2,7 @@
 
 ## 一句话
 
-HyperSync 是一个长驻 Go 服务，基于 `butterfly.orx.me/core` 框架启动。进程启动后会为每个配置了 `sync_to` 的源平台拉起一个独立的同步 goroutine，并附带一个 token 定时刷新 goroutine；同时暴露 Gin HTTP 接口用于 token 管理与健康检查。
+HyperSync 是一个长驻 Go 服务，基于 `butterfly.orx.me/core` 框架启动。它同时承担两条链路：**Post 管理**（前端 + ConnectRPC 服务创作内容,PublishWorker 推送到各平台）与**旧同步链路**（为每个配置了 `sync_to` 的源平台拉起独立的同步 goroutine）,附带 token 定时刷新 goroutine;Gin HTTP 接口用于 ConnectRPC 挂载、媒体上传、token 管理与健康检查。
 
 ## 运行时拓扑
 
@@ -11,28 +11,38 @@ graph TD
     subgraph Process["HyperSync 进程"]
         Main["cmd/main.go"]
         Core["butterfly.orx.me/core App"]
-        HTTP["Gin Router<br/>/ping, /api/token/*"]
+        HTTP["Gin Router<br/>/ping, /api.v1.*Service/*,<br/>/api/media/upload, /api/token/*"]
         Job["InitJob<br/>(每个 main social 一个 goroutine)"]
         Refresh["InitTokenRefresh<br/>(SchedulerService)"]
+        PubW["InitPublishWorker<br/>(PublishWorker)"]
     end
+
+    Front["front/ React SPA<br/>(独立 nginx 镜像,<br/>BACKEND_URL 反代 /api)"] --> HTTP
 
     Main --> Core
     Core --> HTTP
     Core --> Job
     Core --> Refresh
+    Core --> PubW
 
+    HTTP --> RPC["Auth/Post/Media<br/>ConnectRPC 服务<br/>(JWT 拦截器)"]
     Job --> Sync["SyncService.Sync<br/>30s 轮询"]
     Refresh --> Sched["StartTokenRefreshScheduler<br/>10min 轮询"]
+    PubW --> Pub["PublishWorker.Run<br/>30s 轮询 sync_pending"]
 
     Sync --> SocSvc["SocialService"]
     Sched --> SocSvc
+    Pub --> SocSvc
 
     SocSvc --> Memos[("Memos API")]
     SocSvc --> Masto[("Mastodon API")]
     SocSvc --> BS[("Bluesky API")]
     SocSvc --> TH[("Threads API")]
 
-    Sync --> Mongo[("MongoDB<br/>posts / social_configs")]
+    RPC --> Mongo[("MongoDB<br/>managed_posts / media / users<br/>posts / social_configs")]
+    RPC --> S3[("S3 兼容存储<br/>媒体文件")]
+    Pub --> Mongo
+    Sync --> Mongo
     Sched --> Mongo
     Sync --> Redis[("Redis<br/>分布式锁")]
     Sched --> Redis
@@ -60,8 +70,9 @@ graph LR
 | 入口 | `cmd` | 进程启动、注册 InitFunc、把 Gin Router 交给 core |
 | 框架接入 | `internal/app`, `internal/http` | App 占位与 Gin 路由注册 |
 | 接口 | `internal/handler`, `pkg/proto/api/v1` | HTTP handler 与 Proto 生成代码（gRPC / Twirp / Connect） |
-| 编排 | `internal/service` | SyncService、SocialService、SchedulerService、PostService、ContentConverter |
-| 领域 | `internal/social` | 平台抽象（`SocialClient`/`Post`/`Media`/`VisibilityLevel`）与各平台实现 |
+| 编排 | `internal/service` | SyncService、SocialService、SchedulerService、PostService、MediaService、AuthService、PublishWorker、ContentConverter |
+| 领域 | `internal/social` | 平台抽象（`SocialClient`/`Post`/`Media`/`VisibilityLevel`，可选 `SocialUpdater`/`SocialDeleter`）与各平台实现 |
+| 领域 | `internal/post`, `internal/media`, `internal/auth` | Post 管理的领域模型与 Store 接口（Mongo + 内存双实现）、S3 对象存储、JWT 拦截器 |
 | 数据 | `internal/dao` | MongoDB 与 Redis 客户端、Post/SocialConfig 仓储、`ThreadsConfigAdapter` |
 | 装配 | `internal/wire` | Google Wire DI |
 | 可观测性 | `internal/metrics`, `internal/telemetry` | Prometheus 指标、OpenTelemetry trace |
@@ -75,7 +86,9 @@ graph LR
 3. `Router` = `http.Router`
 4. `InitFunc`：
    - `InitIndexes`：确保 MongoDB `posts` 集合的 `(social, social_id)` 唯一索引存在（失败仅记录日志，不阻止启动）。
+   - `InitAuth`：**校验 `auth.jwt_secret` 与用户名/密码必须配置,否则启动失败**;确保 `users` 唯一索引并 seed 初始用户。
    - `InitJob`：遍历 `conf.Conf.Socials`，对所有 `len(SyncTo) > 0` 的平台调用 `wire.NewSyncService(main, syncTo)` 并启动定时同步 goroutine（默认 30s 间隔，可通过 `sync.interval` 配置）。
+   - `InitPublishWorker`：确保 `managed_posts` 索引,启动 PublishWorker goroutine（复用 `sync.interval` / `sync.max_retries`,详见 sync-flow.md 的发布流程一节）。
    - `InitTokenRefresh`：构造一个 `SchedulerService`，启动 `StartTokenRefreshScheduler`（10 分钟一次）。
 
 `butterfly.orx.me/core` 负责初始化日志、配置加载、Mongo/Redis 客户端、HTTP server、Prometheus 暴露、OTel 接入等基础设施，HyperSync 自身只关心业务逻辑。

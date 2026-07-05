@@ -141,3 +141,40 @@ stateDiagram-v2
 ```
 
 刷新窗口（`threads.go:159`）：长期 token 过期前 7 天开始尝试刷新。刷新失败但 token 仍未过期时返回 `nil`（容忍）；只有已过期且刷新失败时才报错。
+
+## 发布流程（PublishWorker，Post 管理）
+
+与上述**拉取式**的 `SyncService` 相对，`PublishWorker`（`internal/service/publish_worker.go`）是**推送式**的:把 HyperSync 原生创作的 Post 发布到目标平台。同样每 `sync.interval`（默认 30s）触发一次,复用 `sync.max_retries`（默认 3）。
+
+```mermaid
+sequenceDiagram
+    participant W as PublishWorker
+    participant DB as Mongo managed_posts
+    participant M as Media Store
+    participant P as Platform
+
+    loop 每 sync.interval
+        W->>DB: ListPendingSync (sync_pending=true, ≤200 条)
+        loop 每条 post（单帖 2 分钟超时）
+            W->>M: 解析 media_ids → CDN URL
+            loop 每个 sync_target
+                alt needs_update 且有 platform_id
+                    W->>P: Update(platform_id, post)
+                else 未成功且 retry < max
+                    W->>P: Post(post)
+                    P-->>W: 平台结果 → ExtractPlatformID
+                end
+                W->>DB: UpdateSyncStatus（字段级 $set，单平台）
+            end
+            W->>DB: SetSyncPending（重算是否仍有未完成目标）
+        end
+    end
+```
+
+要点：
+
+- **工作队列**：只扫 `sync_pending=true` 的已发布 Post；服务层在创建/发布/编辑时置位,worker 处理完重算。全部成功（或重试耗尽）后标记清除,不再进入扫描。
+- **并发安全**：worker 对单平台状态用字段级 `$set`（`UpdateSyncStatus`）,不整文档回写,因此不会覆盖用户在同步期间的编辑。
+- **重试与恢复**：初次同步与 needs_update 更新路径都受 `max_retries` 约束;编辑 Post 会把各平台 `retry_count` 归零,是重试耗尽后的恢复手段。
+- **平台 ID**：`social.ExtractPlatformID` 统一各平台 `Post()` 返回值（Mastodon `*Status`、Bluesky `rkey`、Threads `PublishResponse`、Memos map）,供后续 Update/Delete 使用。
+- **可见性**：仅 `public` / `unlisted` 会同步;其他可见性的 Post 会被直接清除 pending 标记。
