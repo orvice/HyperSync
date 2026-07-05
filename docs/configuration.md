@@ -10,6 +10,16 @@ socials:
     # social.PlatformConfig
     ...
 
+auth:
+  username: admin
+  password: <password>
+  jwt_secret: <至少 32 位随机字符串>
+
+storage:
+  s3:
+    # S3 兼容对象存储
+    ...
+
 store:
   mongo:
     main:
@@ -19,7 +29,7 @@ store:
       addr: ...
 ```
 
-`store.*` 由 core 框架直接消费，应用代码无需感知。`socials` 是 HyperSync 自己的配置。
+`store.*` 由 core 框架直接消费，应用代码无需感知。`socials`、`auth`、`storage` 是 HyperSync 自己的配置。
 
 ## `socials.<name>` (social.PlatformConfig)
 
@@ -75,6 +85,47 @@ threads:
 
 Threads token 一旦写入 `social_configs` 集合，YAML 中的 `access_token` 即被忽略。
 
+## `auth` 配置（conf.AuthConfig）
+
+```yaml
+auth:
+  username: admin
+  password: <password>
+  jwt_secret: <至少 32 位随机字符串>
+```
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `username` | string | 管理员用户名，启动时种入 `users` 集合 |
+| `password` | string | 管理员密码（仅首次种入，之后可通过 `ChangePassword` RPC 修改） |
+| `jwt_secret` | string | JWT（HMAC）签名密钥，所有 RPC 认证依赖它 |
+
+**`auth.jwt_secret` 为必填项**：缺少 `auth` 配置段或 `jwt_secret` 为空时服务会启动失败。建议使用至少 32 位随机字符作为密钥。
+
+## `storage.s3` 配置（conf.S3Config）
+
+媒体上传（`POST /api/media/upload`）与 `MediaService` 使用的对象存储。未配置时回退到内存存储（仅用于开发，重启即丢失）。
+
+```yaml
+storage:
+  s3:
+    endpoint: https://s3.example.com
+    bucket: hypersync
+    access_key: <access key>
+    secret_key: <secret key>
+    region: us-east-1
+    cdn_domain: https://cdn.example.com
+```
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `endpoint` | string | S3 兼容存储端点 |
+| `bucket` | string | Bucket 名 |
+| `access_key` | string | Access Key |
+| `secret_key` | string | Secret Key |
+| `region` | string | 区域 |
+| `cdn_domain` | string | 对外访问域名，用于拼接返回的 `cdn_url` |
+
 ## 配置示例：单源多目标
 
 ```yaml
@@ -121,6 +172,8 @@ socials:
 | `batch_size` | int | 100 | 每次拉取帖子数量上限（`sync_service.go`） |
 | `skip_older` | duration | 1h | 跳过早于此时长的旧帖（`sync_service.go`） |
 | `max_retries` | int | 3 | 跨发失败最大重试次数（`sync_service.go`） |
+
+发布 worker（`PublishWorker`，负责把 `PostService` 创建的帖子跨发到目标平台）复用 `sync.interval` 与 `sync.max_retries`，没有独立的配置项。
 
 以下字段已定义但未被读取：`skip_private`、`max_memos_per_run`、`target_platforms`。
 

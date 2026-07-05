@@ -37,6 +37,16 @@ func NewSchedulerService() (*service.SchedulerService, error) {
 	))
 }
 
+func NewSocialServiceOnly() (*service.SocialService, error) {
+	panic(wire.Build(
+		dao.NewMongoClient,
+		dao.NewSocialConfigDao,
+		dao.NewThreadsConfigAdapter,
+		service.NewSocialService,
+		wire.Bind(new(social.TokenManager), new(*dao.ThreadsConfigAdapter)),
+	))
+}
+
 func NewMongoDAO() *dao.MongoDAO {
 	panic(wire.Build(
 		dao.NewMongoClient,

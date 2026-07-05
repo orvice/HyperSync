@@ -2,14 +2,21 @@ package main
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"butterfly.orx.me/core"
 	"butterfly.orx.me/core/app"
 	"butterfly.orx.me/core/log"
 
+	"go.orx.me/apps/hyper-sync/internal/auth"
 	"go.orx.me/apps/hyper-sync/internal/conf"
+	"go.orx.me/apps/hyper-sync/internal/dao"
 	"go.orx.me/apps/hyper-sync/internal/http"
+	"go.orx.me/apps/hyper-sync/internal/media"
+	"go.orx.me/apps/hyper-sync/internal/post"
+	"go.orx.me/apps/hyper-sync/internal/service"
+	"go.orx.me/apps/hyper-sync/internal/social"
 	"go.orx.me/apps/hyper-sync/internal/wire"
 )
 
@@ -22,7 +29,9 @@ func NewApp() *app.App {
 		Router:  http.Router,
 		InitFunc: []func() error{
 			InitIndexes,
+			InitAuth,
 			InitJob,
+			InitPublishWorker,
 			InitTokenRefresh,
 		},
 	})
@@ -34,8 +43,34 @@ func main() {
 	app.Run()
 }
 
-// InitIndexes 在启动时确保数据库索引存在。
-// 索引创建失败（例如存量数据中已有重复）不应阻止服务启动，仅记录错误。
+func InitAuth() error {
+	logger := log.FromContext(context.Background())
+
+	authConf := conf.Conf.Auth
+	if authConf == nil || authConf.JWTSecret == "" {
+		return errors.New("auth.jwt_secret must be configured; refusing to start with a forgeable JWT secret")
+	}
+
+	if authConf.Username == "" || authConf.Password == "" {
+		return errors.New("auth.username and auth.password must be configured to seed the initial user")
+	}
+
+	mongoClient := dao.NewMongoClient()
+	userStore := auth.NewMongoUserStore(mongoClient, "hypersync")
+
+	ctx := context.Background()
+	if err := userStore.EnsureIndexes(ctx); err != nil {
+		logger.Error("Failed to ensure user indexes", "error", err)
+	}
+
+	if err := auth.SeedUser(ctx, userStore, authConf.Username, authConf.Password); err != nil {
+		logger.Error("Failed to seed user", "error", err)
+		return err
+	}
+
+	return nil
+}
+
 func InitIndexes() error {
 	logger := log.FromContext(context.Background())
 	mongoDAO := wire.NewMongoDAO()
@@ -87,6 +122,56 @@ func InitTokenRefresh() error {
 	}()
 
 	logger.Info("Token refresh scheduler initialized successfully")
+	return nil
+}
+
+func InitPublishWorker() error {
+	logger := log.FromContext(context.Background())
+
+	mongoClient := dao.NewMongoClient()
+	postStore := post.NewMongoStore(mongoClient, "hypersync")
+	if err := postStore.EnsureIndexes(context.Background()); err != nil {
+		logger.Error("Failed to ensure managed post indexes", "error", err)
+	}
+	mediaStore := media.NewMongoStore(mongoClient, "hypersync")
+
+	socialService, err := wire.NewSocialServiceOnly()
+	if err != nil {
+		logger.Error("Failed to create social service for publish worker", "error", err)
+		return err
+	}
+
+	clients := make(map[string]social.SocialClient)
+	for name, platform := range socialService.GetAllPlatforms() {
+		clients[name] = platform.Client
+	}
+
+	maxRetries := 3
+	if conf.Conf.Sync != nil && conf.Conf.Sync.MaxRetries > 0 {
+		maxRetries = conf.Conf.Sync.MaxRetries
+	}
+
+	interval := 30 * time.Second
+	if conf.Conf.Sync != nil && conf.Conf.Sync.Interval > 0 {
+		interval = conf.Conf.Sync.Interval
+	}
+
+	worker := service.NewPublishWorker(postStore, mediaStore, clients, maxRetries)
+
+	go func() {
+		ctx := context.Background()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			if err := worker.Run(ctx); err != nil {
+				logger.Error("Publish worker failed", "error", err)
+			}
+			<-ticker.C
+		}
+	}()
+
+	logger.Info("Publish worker started", "interval", interval, "max_retries", maxRetries)
 	return nil
 }
 

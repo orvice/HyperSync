@@ -7,12 +7,14 @@
 - `cmd/main.go` —— 进程入口。
   - `NewApp()`：用 `core.New` 装配 App。
   - `InitJob()`：遍历 `conf.Conf.Socials`，为每个配置了 `sync_to` 的平台调用 `wire.NewSyncService` 并启动 30s 间隔的同步 goroutine。
+  - `InitAuth()`：确保用户索引并按 `auth.username`/`auth.password` 种入管理员账号。
+  - `InitPublishWorker()`：启动 `PublishWorker` goroutine（间隔/重试复用 `sync.interval`/`sync.max_retries`）。
   - `InitTokenRefresh()`：构造 `SchedulerService`，启动 10 分钟间隔的 token 刷新调度器。
 
 ## `internal/conf/`
 
 - `config.go` —— 顶层 `Config` 结构体与 `Conf` 单例。
-  - 包含 `Socials map[string]*social.PlatformConfig`、`Database`、`Memos`、`Sync`、`Scheduler`、`Webhook` 等子配置。
+  - 包含 `Socials map[string]*social.PlatformConfig`、`Database`、`Memos`、`Sync`、`Scheduler`、`Webhook`、`Auth`、`Storage` 等子配置。
   - 实际 YAML 反序列化由 `butterfly.orx.me/core` 完成。
 
 注意：`Config.SocialConfig` 与 `social.PlatformConfig` 是两套不同的结构体（前者历史遗留，后者是当前生效的平台配置）。
@@ -47,9 +49,31 @@ Name() string
 | `social_service.go` | `SocialService` | 平台注册表；`GetPlatform` / `GetAllPlatforms` / `PostToPlatform` |
 | `sync_service.go` | `SyncService` | 核心同步循环，详见 [sync-flow.md](sync-flow.md) |
 | `scheduler_service.go` | `SchedulerService` | Token 定时检查/刷新、`TokenStatus` 查询 |
-| `post_service.go` | `PostService` | 数据库视角的 Post CRUD 与 `SyncPost`/`StartSyncJob`（备用同步实现，目前 `cmd/main.go` 未启用） |
+| `auth_service.go` | `AuthService` | ConnectRPC `api.v1.AuthService` 实现：`Login`（签发 JWT）/`ChangePassword` |
+| `post_service.go` | `PostService` | ConnectRPC `api.v1.PostService` 实现：Post CRUD + `PublishPost`，可选注入 `PlatformDeleter` 做跨平台删除 |
+| `media_service.go` | `MediaService` | ConnectRPC `api.v1.MediaService` 实现 + `HandleUpload`（`POST /api/media/upload`） |
+| `publish_worker.go` | `PublishWorker` | 后台发布 worker：轮询待发布 Post 并跨发到 `sync_targets`，复用 `sync.interval`/`sync.max_retries` |
+| `platform_deleter.go` | `SocialPlatformDeleter` | 将 `social.SocialClient` 集合适配为 `PlatformDeleter` |
 | `content_converter.go` | `ContentConverter` | Memo → Post 转换的辅助方法（目前未直接被 SyncService 调用） |
-| `hyper.go` | `HyperSyncService` | Proto 服务端实现（占位/未挂载到 HTTP） |
+
+## `internal/auth/`
+
+认证基础设施。
+
+| 文件 | 内容 |
+| --- | --- |
+| `user.go` | `User` 模型与 `UserStore` 接口 |
+| `mongo_store.go` | `MongoUserStore`，`users` 集合 |
+| `seed.go` | `SeedUser`：启动时用 `auth.username`/`auth.password` 种入管理员账号 |
+| `interceptor.go` | `NewAuthInterceptor`：ConnectRPC 拦截器，除 `/api.v1.AuthService/Login` 外校验 Bearer JWT |
+
+## `internal/post/`
+
+Post 领域层：`store.go` 定义 `Post` 模型与 `Store` 接口，`mongo_store.go`/`memory_store.go` 为 Mongo 与内存实现（内存实现用于测试）。
+
+## `internal/media/`
+
+Media 领域层：`store.go` 定义 `Media` 模型与 `Store` 接口（`mongo_store.go`/`memory_store.go` 实现）；对象存储抽象 `ObjectStorage` 由 `s3.go`（S3 兼容存储，`storage.s3` 配置）或 `memory_object_storage.go`（未配置 S3 时的回退）实现。
 
 ## `internal/dao/`
 
@@ -66,7 +90,7 @@ Name() string
 
 ## `internal/http/`
 
-- `route.go` —— `Router(*gin.Engine)`：注册 `/ping` 与 `/api/token/*` 路由。Token 路由内手动 `wire.NewSchedulerService()` 装配 handler。
+- `route.go` —— `Router(*gin.Engine)`：注册 `/ping`、`/api/token/*` 路由，并通过 `mountConnectRPC` 挂载 `AuthService`/`PostService`/`MediaService` 三个 ConnectRPC handler（均套用 JWT 拦截器）与 `POST /api/media/upload` 上传端点。
 
 ## `internal/handler/`
 
@@ -91,8 +115,10 @@ Google Wire DI。
 
 ## `proto/` 与 `pkg/proto/`
 
-- `proto/api/v1/hyper.proto` —— 定义 `HyperSyncService`（`ListPosts`/`GetPost`/`CreatePost`/`DeletePost`）。
-- `pkg/proto/api/v1/` —— `buf generate` 产出的代码：标准 gRPC、Twirp、Connect 三套 stub 均存在。
+- `proto/api/v1/auth.proto` —— `AuthService`（`Login`/`ChangePassword`）。
+- `proto/api/v1/post.proto` —— `PostService`（`CreatePost`/`GetPost`/`ListPosts`/`UpdatePost`/`PublishPost`/`DeletePost`）。
+- `proto/api/v1/media.proto` —— `MediaService`（`GetMedia`/`ListMedia`/`DeleteMedia`）。
+- `pkg/proto/api/v1/` —— `buf generate` 产出的代码：`{auth,post,media}.pb.go` 及 gRPC/Twirp stub；`v1connect/` 下为 Connect stub。
 - 重新生成命令：`make buf`。
 
-**注意**：当前 `cmd/main.go` 只挂载了 Gin HTTP router，没有显式启动 gRPC/Connect server。Proto 生成代码处于"已就绪但未暴露"状态。
+**注意**：旧的 `proto/api/v1/hyper.proto`（`HyperSyncService`）已删除。Connect handler 在 `internal/http/route.go` 中挂载到 Gin router 对外暴露；gRPC/Twirp stub 仅生成、未挂载。

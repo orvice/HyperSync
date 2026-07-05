@@ -45,6 +45,17 @@ func NewSchedulerService() (*service.SchedulerService, error) {
 	return schedulerService, nil
 }
 
+func NewSocialServiceOnly() (*service.SocialService, error) {
+	client := dao.NewMongoClient()
+	socialConfigDao := dao.NewSocialConfigDao(client)
+	threadsConfigAdapter := dao.NewThreadsConfigAdapter(socialConfigDao)
+	socialService, err := service.NewSocialService(threadsConfigAdapter)
+	if err != nil {
+		return nil, err
+	}
+	return socialService, nil
+}
+
 func NewMongoDAO() *dao.MongoDAO {
 	client := dao.NewMongoClient()
 	mongoDAO := dao.NewMongoDAO(client)

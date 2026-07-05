@@ -1,0 +1,93 @@
+syntax = "proto3";
+package api.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "go.orx.me/apps/hyper-sync/pkg/proto/api/v1";
+
+message Post {
+  string id = 1;
+  string content = 2;
+  string visibility = 3;
+  string status = 4;
+  repeated string media_ids = 5;
+  repeated string sync_targets = 6;
+  map<string, CrossPostStatus> cross_post_status = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+}
+
+message CrossPostStatus {
+  bool success = 1;
+  string error = 2;
+  string platform_id = 3;
+  google.protobuf.Timestamp posted_at = 4;
+  int32 retry_count = 5;
+  bool needs_update = 6;
+}
+
+message CreatePostRequest {
+  string content = 1;
+  string visibility = 2;
+  string status = 3;
+  repeated string media_ids = 4;
+  repeated string sync_targets = 5;
+}
+
+message CreatePostResponse {
+  Post post = 1;
+}
+
+message GetPostRequest {
+  string id = 1;
+}
+
+message GetPostResponse {
+  Post post = 1;
+}
+
+message ListPostsRequest {
+  int32 page_size = 1;
+  int32 page = 2;
+  string status = 3;
+}
+
+message ListPostsResponse {
+  repeated Post posts = 1;
+  int32 total = 2;
+}
+
+message UpdatePostRequest {
+  string id = 1;
+  string content = 2;
+  string visibility = 3;
+  repeated string media_ids = 4;
+  repeated string sync_targets = 5;
+}
+
+message UpdatePostResponse {
+  Post post = 1;
+}
+
+message PublishPostRequest {
+  string id = 1;
+}
+
+message PublishPostResponse {
+  Post post = 1;
+}
+
+message DeletePostRequest {
+  string id = 1;
+}
+
+message DeletePostResponse {}
+
+service PostService {
+  rpc CreatePost(CreatePostRequest) returns (CreatePostResponse) {}
+  rpc GetPost(GetPostRequest) returns (GetPostResponse) {}
+  rpc ListPosts(ListPostsRequest) returns (ListPostsResponse) {}
+  rpc UpdatePost(UpdatePostRequest) returns (UpdatePostResponse) {}
+  rpc PublishPost(PublishPostRequest) returns (PublishPostResponse) {}
+  rpc DeletePost(DeletePostRequest) returns (DeletePostResponse) {}
+}

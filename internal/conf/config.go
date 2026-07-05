@@ -17,6 +17,27 @@ type Config struct {
 	Sync      *SyncConfig
 	Scheduler *SchedulerConfig
 	Webhook   *WebhookConfig
+	Auth      *AuthConfig
+	Storage   *StorageConfig
+}
+
+type AuthConfig struct {
+	Username  string
+	Password  string
+	JWTSecret string `yaml:"jwt_secret"`
+}
+
+type StorageConfig struct {
+	S3 *S3Config
+}
+
+type S3Config struct {
+	Endpoint  string
+	Bucket    string
+	AccessKey string `yaml:"access_key"`
+	SecretKey string `yaml:"secret_key"`
+	Region    string
+	CDNDomain string `yaml:"cdn_domain"`
 }
 
 // ServerConfig contains server configuration

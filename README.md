@@ -1,12 +1,36 @@
 # HyperSync
 
-A multi-platform content synchronization service that syncs content from Memos to social networks like Mastodon, Bluesky, and Threads.
+A personal content publishing hub. Author posts in HyperSync (React frontend + ConnectRPC API) and sync them to social platforms — Mastodon, Bluesky, Threads, and Memos — with media upload to S3-compatible storage. Also includes the original Memos → social networks sync pipeline.
+
+## Features
+
+- **Post management** — draft/publish lifecycle, per-platform sync targets, edit with re-sync, delete with cascade to all synced platforms
+- **Media upload** — S3-compatible object storage with CDN URLs, attached to posts on sync
+- **Web frontend** — React + shadcn/ui under `front/`, shipped as a separate Docker image
+- **JWT auth** — single-user login; `auth.jwt_secret` is required or the server refuses to start
+- **Legacy sync** — the original Memos → Mastodon/Bluesky/Threads pull-based sync still runs alongside
 
 ## Configuration
 
 ### Configuration File Example (local.yaml)
 
 ```yaml
+# Required: the server fails to start without auth
+auth:
+  username: admin
+  password: your-login-password        # seeded into MongoDB on first startup
+  jwt_secret: "use-32-plus-random-characters-here"
+
+# Optional: S3-compatible media storage (falls back to in-memory for dev)
+storage:
+  s3:
+    endpoint: https://s3.example.com
+    bucket: hypersync-media
+    access_key: your_access_key
+    secret_key: your_secret_key
+    region: auto
+    cdn_domain: https://cdn.example.com
+
 socials:
   # Main content source - Memos
   memos:
@@ -131,3 +155,18 @@ make build
 # Run the service
 ./bin/hyper-sync
 ```
+
+## Frontend
+
+The web UI lives in `front/` (Vite + React) and is deployed as its own Docker image (nginx). The nginx config proxies `^/api[./]` (ConnectRPC + REST) to the backend via the `BACKEND_URL` environment variable:
+
+```bash
+# Development (proxies /api to localhost:8080)
+cd front && npm install && npm run dev
+
+# Production image
+docker build -t hypersync-front ./front
+docker run -e BACKEND_URL=http://hypersync:8080 -p 80:80 hypersync-front
+```
+
+See `docs/` for API reference (`api.md`), configuration details (`configuration.md`), data model (`data-model.md`), and module layout (`modules.md`).

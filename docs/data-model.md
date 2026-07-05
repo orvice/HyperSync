@@ -4,6 +4,15 @@ MongoDB 数据库名硬编码为 `hypersync`（见 `internal/dao/mongo.go:21`）
 
 ## 集合一览
 
+| 集合 | 归属 | 用途 |
+|---|---|---|
+| `managed_posts` | Post 管理（新） | HyperSync 原生创作的 Post，发布 worker 的工作队列 |
+| `media` | Post 管理（新） | 上传到 S3 的媒体元数据 |
+| `users` | Post 管理（新） | 单用户认证（bcrypt 密码哈希） |
+| `posts` | 旧同步链路 | 从源平台拉取的帖子及其跨发状态 |
+| `social_configs` | 旧同步链路 | Threads 长期 token |
+| `sync_records` | 旧同步链路 | 未启用 |
+
 ```mermaid
 erDiagram
     POSTS ||--o{ CROSS_POST_STATUS : "embeds map"
@@ -46,6 +55,28 @@ erDiagram
         time expires_at "Threads 长期 token 过期时间"
     }
 ```
+
+## `managed_posts` 集合（Post 管理）
+
+Go 模型：`post.postDocument`（`internal/post/mongo_store.go`），Store 接口见 `internal/post/store.go`。
+
+HyperSync 作为内容源头（source of truth）创作的 Post。**刻意与旧链路的 `posts` 集合分开**——`posts` 上有 `(social, social_id)` 非稀疏唯一索引，托管 Post 没有这两个字段，混用会触发 E11000。
+
+关键字段：
+- `status`：`draft` | `published`。草稿不会被发布 worker 拾取。
+- `sync_pending`：worker 工作队列标记。服务层在创建/发布/编辑已发布 Post 时置 `true`；worker 每轮处理后按「是否仍有未完成目标」重算。`ListPendingSync` 只查 `sync_pending=true`，每轮最多 200 条。
+- `cross_post_status[target]`：每目标平台的同步状态（含 `platform_id`、`retry_count`、`needs_update`）。worker 用字段级 `$set`（`UpdateSyncStatus`）写入单个平台的状态，避免整文档覆盖用户并发编辑。
+- 编辑已发布 Post 会给已同步平台打 `needs_update` 并把 `retry_count` 归零（给失败平台恢复机会）。
+
+索引（`EnsureIndexes`，`InitPublishWorker` 时创建）：`(sync_pending, status)`、`(status, created_at desc)`。
+
+## `media` 集合（Post 管理）
+
+Go 模型：`media.mediaDocument`（`internal/media/mongo_store.go`）。存 S3 key、CDN URL、content type、大小、原始文件名。二进制内容在 S3（未配置 S3 时退化为内存存储，仅限开发）。
+
+## `users` 集合（Post 管理）
+
+Go 模型：`auth.userDocument`（`internal/auth/mongo_store.go`）。单用户（`auth.username` 配置项在启动时 seed），密码为 bcrypt 哈希。`username` 上有唯一索引。
 
 ## `posts` 集合
 

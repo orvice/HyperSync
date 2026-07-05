@@ -1,0 +1,45 @@
+syntax = "proto3";
+package api.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "go.orx.me/apps/hyper-sync/pkg/proto/api/v1";
+
+message Media {
+  string id = 1;
+  string cdn_url = 2;
+  string content_type = 3;
+  int64 size_bytes = 4;
+  string original_filename = 5;
+  google.protobuf.Timestamp created_at = 6;
+}
+
+message GetMediaRequest {
+  string id = 1;
+}
+
+message GetMediaResponse {
+  Media media = 1;
+}
+
+message ListMediaRequest {
+  int32 page_size = 1;
+  int32 page = 2;
+}
+
+message ListMediaResponse {
+  repeated Media items = 1;
+  int32 total = 2;
+}
+
+message DeleteMediaRequest {
+  string id = 1;
+}
+
+message DeleteMediaResponse {}
+
+service MediaService {
+  rpc GetMedia(GetMediaRequest) returns (GetMediaResponse) {}
+  rpc ListMedia(ListMediaRequest) returns (ListMediaResponse) {}
+  rpc DeleteMedia(DeleteMediaRequest) returns (DeleteMediaResponse) {}
+}

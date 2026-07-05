@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/mattn/go-mastodon"
 )
 
 // Platform represents different social media platforms
@@ -346,6 +348,35 @@ type SocialClient interface {
 	Post(ctx context.Context, post *Post) (interface{}, error)
 	ListPosts(ctx context.Context, limit int) ([]*Post, error)
 	Name() string
+}
+
+// SocialUpdater is an optional interface for platforms that support editing posts.
+type SocialUpdater interface {
+	Update(ctx context.Context, platformID string, post *Post) error
+}
+
+// SocialDeleter is an optional interface for platforms that support deleting posts.
+type SocialDeleter interface {
+	Delete(ctx context.Context, platformID string) error
+}
+
+// ExtractPlatformID normalizes the platform-specific result of SocialClient.Post
+// into the identifier later passed to SocialUpdater.Update / SocialDeleter.Delete.
+// Each client returns a different shape; Bluesky's Delete expects the rkey.
+func ExtractPlatformID(result interface{}) string {
+	switch r := result.(type) {
+	case map[string]string: // Memos
+		return r["id"]
+	case map[string]interface{}: // Bluesky
+		if rkey, ok := r["rkey"].(string); ok {
+			return rkey
+		}
+	case *mastodon.Status: // Mastodon
+		return string(r.ID)
+	case *PublishResponse: // Threads
+		return r.ID
+	}
+	return ""
 }
 
 type Post struct {
