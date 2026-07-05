@@ -1,32 +1,43 @@
-# React + TypeScript + Vite
+# HyperSync Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React + TypeScript + Vite SPA for HyperSync's post management: login, post CRUD with draft/publish, media upload, per-platform sync status, and settings (password change). UI built with shadcn/ui; API calls go through ConnectRPC (`@connectrpc/connect-web`) with a JWT interceptor.
 
-Currently, two official plugins are available:
+## Development
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm install
+npm run dev        # Vite dev server; proxies /api* to http://localhost:8080
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+The backend must be running locally on port 8080 (see the repo root README for backend setup, including the required `auth` config).
+
+## Generated code
+
+`src/gen/` is generated from `../proto` via buf:
+
+```bash
+npx buf generate --template buf.gen.yaml ../proto
+```
+
+Regenerate after changing any `.proto` file. Do not edit `src/gen/` by hand.
+
+## Build & deploy
+
+```bash
+npm run build      # tsc -b && vite build → dist/
+```
+
+The Docker image serves `dist/` with nginx and reverse-proxies all `^/api[./]` paths (ConnectRPC + REST) to the backend:
+
+```bash
+docker build -t hypersync-front .
+docker run -e BACKEND_URL=http://hypersync:8080 -p 80:80 hypersync-front
+```
+
+`BACKEND_URL` defaults to `http://backend:8080`; the nginx config is templated at container start (`nginx.conf.template`, envsubst).
+
+## Structure
+
+- `src/lib/` — ConnectRPC transport + JWT interceptor (`connect.ts`), auth context (`auth.tsx`), media upload helper (`media.ts`)
+- `src/pages/` — login, posts list, create/edit post, post detail, settings
+- `src/components/` — media upload widget, shadcn/ui primitives
