@@ -16,8 +16,8 @@ on:
 env:
   # Use docker.io for Docker Hub if empty
   REGISTRY: ghcr.io
-  # github.repository as <account>/<repo>
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: ${{ github.repository_owner }}/hypersync
+  FRONT_IMAGE_NAME: ${{ github.repository_owner }}/hypersync-front
 
 
 jobs:
@@ -59,38 +59,69 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Extract metadata (tags, labels) for Docker
+      # Extract metadata (tags, labels) for the backend Docker image
       # https://github.com/docker/metadata-action
-      - name: Extract Docker metadata
-        id: meta
+      - name: Extract backend Docker metadata
+        id: meta-backend
         uses: docker/metadata-action@96383f45573cb7f253c731d3b3ab81c87ef81934 # v5.0.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
-      # Build and push Docker image with Buildx (don't push on PR)
+      # Extract metadata (tags, labels) for the frontend Docker image
+      # https://github.com/docker/metadata-action
+      - name: Extract frontend Docker metadata
+        id: meta-frontend
+        uses: docker/metadata-action@96383f45573cb7f253c731d3b3ab81c87ef81934 # v5.0.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.FRONT_IMAGE_NAME }}
+
+      # Build and push backend Docker image with Buildx (don't push on PR)
       # https://github.com/docker/build-push-action
-      - name: Build and push Docker image
-        id: build-and-push
+      - name: Build and push backend Docker image
+        id: build-and-push-backend
         uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09 # v5.0.0
         with:
           context: .
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: ${{ steps.meta-backend.outputs.tags }}
+          labels: ${{ steps.meta-backend.outputs.labels }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
 
-      # Sign the resulting Docker image digest except on PRs.
+      # Build and push frontend Docker image with Buildx (don't push on PR)
+      # https://github.com/docker/build-push-action
+      - name: Build and push frontend Docker image
+        id: build-and-push-frontend
+        uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09 # v5.0.0
+        with:
+          context: ./front
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta-frontend.outputs.tags }}
+          labels: ${{ steps.meta-frontend.outputs.labels }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+      # Sign the resulting Docker image digests except on PRs.
       # This will only write to the public Rekor transparency log when the Docker
       # repository is public to avoid leaking data.  If you would like to publish
       # transparency data even for private images, pass --force to cosign below.
       # https://github.com/sigstore/cosign
-      - name: Sign the published Docker image
+      - name: Sign the published backend Docker image
         if: ${{ github.event_name != 'pull_request' }}
         env:
           # https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions#using-an-intermediate-environment-variable
-          TAGS: ${{ steps.meta.outputs.tags }}
-          DIGEST: ${{ steps.build-and-push.outputs.digest }}
+          TAGS: ${{ steps.meta-backend.outputs.tags }}
+          DIGEST: ${{ steps.build-and-push-backend.outputs.digest }}
+        # This step uses the identity token to provision an ephemeral certificate
+        # against the sigstore community Fulcio instance.
+        run: echo "${TAGS}" | xargs -I {} cosign sign --yes {}@${DIGEST}
+
+      - name: Sign the published frontend Docker image
+        if: ${{ github.event_name != 'pull_request' }}
+        env:
+          # https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions#using-an-intermediate-environment-variable
+          TAGS: ${{ steps.meta-frontend.outputs.tags }}
+          DIGEST: ${{ steps.build-and-push-frontend.outputs.digest }}
         # This step uses the identity token to provision an ephemeral certificate
         # against the sigstore community Fulcio instance.
         run: echo "${TAGS}" | xargs -I {} cosign sign --yes {}@${DIGEST}

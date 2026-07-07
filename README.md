@@ -169,4 +169,9 @@ docker build -t hypersync-front ./front
 docker run -e BACKEND_URL=http://hypersync:8080 -p 80:80 hypersync-front
 ```
 
+Published images are available from GitHub Container Registry:
+
+- Backend: `ghcr.io/orvice/hypersync`
+- Frontend: `ghcr.io/orvice/hypersync-front`
+
 See `docs/` for API reference (`api.md`), configuration details (`configuration.md`), data model (`data-model.md`), and module layout (`modules.md`).
