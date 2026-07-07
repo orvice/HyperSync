@@ -156,7 +156,8 @@ func InitPublishWorker() error {
 		interval = conf.Conf.Sync.Interval
 	}
 
-	worker := service.NewPublishWorker(postStore, mediaStore, clients, maxRetries)
+	deleter := service.NewSocialPlatformDeleter(clients)
+	worker := service.NewPublishWorker(postStore, mediaStore, clients, maxRetries, service.WithWorkerDeleter(deleter))
 
 	go func() {
 		ctx := context.Background()

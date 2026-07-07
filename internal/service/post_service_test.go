@@ -236,6 +236,63 @@ func TestUpdatePost_DraftPost_DoesNotMarkNeedsUpdate(t *testing.T) {
 	assert.Empty(t, resp.Msg.Post.CrossPostStatus)
 }
 
+func TestUpdatePost_DeletingPost_RejectsUpdate(t *testing.T) {
+	store := post.NewMemoryStore()
+	svc := service.NewPostService(store)
+
+	mux := http.NewServeMux()
+	path, handler := v1connect.NewPostServiceHandler(svc)
+	mux.Handle(path, handler)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	client := v1connect.NewPostServiceClient(server.Client(), server.URL)
+
+	p, err := store.Create(context.Background(), &post.Post{
+		Content:    "Being deleted",
+		Visibility: "public",
+		Status:     "deleting",
+		CrossPostStatus: map[string]post.CrossPostStatus{
+			"mastodon": {PlatformID: "masto-111"},
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = client.UpdatePost(context.Background(), connect.NewRequest(&v1.UpdatePostRequest{
+		Id:         p.ID,
+		Content:    "Trying to update",
+		Visibility: "public",
+	}))
+
+	require.Error(t, err)
+	assert.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+}
+
+func TestPublishPost_DeletingPost_RejectsPublish(t *testing.T) {
+	store := post.NewMemoryStore()
+	svc := service.NewPostService(store)
+
+	mux := http.NewServeMux()
+	path, handler := v1connect.NewPostServiceHandler(svc)
+	mux.Handle(path, handler)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	client := v1connect.NewPostServiceClient(server.Client(), server.URL)
+
+	p, err := store.Create(context.Background(), &post.Post{
+		Content:    "Being deleted",
+		Visibility: "public",
+		Status:     "deleting",
+	})
+	require.NoError(t, err)
+
+	_, err = client.PublishPost(context.Background(), connect.NewRequest(&v1.PublishPostRequest{
+		Id: p.ID,
+	}))
+
+	require.Error(t, err)
+	assert.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+}
+
 func TestDeletePost_CascadesToPlatforms(t *testing.T) {
 	store := post.NewMemoryStore()
 	deleter := &mockPlatformDeleter{results: map[string]error{}}
@@ -275,7 +332,7 @@ func TestDeletePost_CascadesToPlatforms(t *testing.T) {
 	assert.ErrorIs(t, err, post.ErrNotFound)
 }
 
-func TestDeletePost_PlatformFailure_StillDeletesPost(t *testing.T) {
+func TestDeletePost_PlatformFailure_TransitionsToDeleting(t *testing.T) {
 	store := post.NewMemoryStore()
 	deleter := &mockPlatformDeleter{results: map[string]error{
 		"mastodon": fmt.Errorf("network error"),
@@ -300,15 +357,106 @@ func TestDeletePost_PlatformFailure_StillDeletesPost(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Should succeed even though platform delete fails
 	_, err = client.DeletePost(context.Background(), connect.NewRequest(&v1.DeletePostRequest{
 		Id: p.ID,
 	}))
 	require.NoError(t, err)
 
-	// Post should still be deleted locally
-	_, err = store.GetByID(context.Background(), p.ID)
-	assert.ErrorIs(t, err, post.ErrNotFound)
+	// Post should NOT be deleted — it should transition to "deleting"
+	got, err := store.GetByID(context.Background(), p.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "deleting", got.Status)
+	assert.True(t, got.SyncPending)
+
+	// PlatformID must be preserved so the worker can retry
+	ms := got.CrossPostStatus["mastodon"]
+	assert.Equal(t, "masto-111", ms.PlatformID)
+	assert.False(t, ms.Success, "success should be cleared so worker retries the delete")
+	assert.Equal(t, 1, ms.RetryCount)
+}
+
+func TestDeletePost_MixedPlatformFailure_OnlyFailedPlatformNeedsRetry(t *testing.T) {
+	store := post.NewMemoryStore()
+	deleter := &mockPlatformDeleter{results: map[string]error{
+		"mastodon": fmt.Errorf("network error"),
+	}}
+	svc := service.NewPostService(store, service.WithPlatformDeleter(deleter))
+
+	mux := http.NewServeMux()
+	path, handler := v1connect.NewPostServiceHandler(svc)
+	mux.Handle(path, handler)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	client := v1connect.NewPostServiceClient(server.Client(), server.URL)
+
+	p, err := store.Create(context.Background(), &post.Post{
+		Content:     "Mixed results",
+		Visibility:  "public",
+		Status:      "published",
+		SyncTargets: []string{"mastodon", "bluesky"},
+		CrossPostStatus: map[string]post.CrossPostStatus{
+			"mastodon": {Success: true, PlatformID: "masto-555"},
+			"bluesky":  {Success: true, PlatformID: "bsky-666"},
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = client.DeletePost(context.Background(), connect.NewRequest(&v1.DeletePostRequest{
+		Id: p.ID,
+	}))
+	require.NoError(t, err)
+
+	got, err := store.GetByID(context.Background(), p.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "deleting", got.Status)
+
+	// Mastodon failed — should be preserved with retry info
+	ms := got.CrossPostStatus["mastodon"]
+	assert.Equal(t, "masto-555", ms.PlatformID)
+	assert.False(t, ms.Success)
+	assert.Equal(t, 1, ms.RetryCount)
+
+	// Bluesky succeeded — should be removed from CrossPostStatus
+	_, hasBsky := got.CrossPostStatus["bluesky"]
+	assert.False(t, hasBsky, "successfully deleted platform should be removed")
+}
+
+func TestDeletePost_AlreadyDeleting_RetriesInsteadOfOrphaning(t *testing.T) {
+	store := post.NewMemoryStore()
+	deleter := &mockPlatformDeleter{results: map[string]error{
+		"mastodon": fmt.Errorf("still failing"),
+	}}
+	svc := service.NewPostService(store, service.WithPlatformDeleter(deleter))
+
+	mux := http.NewServeMux()
+	path, handler := v1connect.NewPostServiceHandler(svc)
+	mux.Handle(path, handler)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	client := v1connect.NewPostServiceClient(server.Client(), server.URL)
+
+	// Simulate a post already in "deleting" state (from a previous failed delete)
+	p, err := store.Create(context.Background(), &post.Post{
+		Content:    "Already deleting",
+		Visibility: "public",
+		Status:     "deleting",
+		SyncPending: true,
+		CrossPostStatus: map[string]post.CrossPostStatus{
+			"mastodon": {Success: false, PlatformID: "masto-222", RetryCount: 1},
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = client.DeletePost(context.Background(), connect.NewRequest(&v1.DeletePostRequest{
+		Id: p.ID,
+	}))
+	require.NoError(t, err)
+
+	// Post must NOT be deleted — it should stay in "deleting" with preserved PlatformID
+	got, err := store.GetByID(context.Background(), p.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "deleting", got.Status)
+	assert.Equal(t, "masto-222", got.CrossPostStatus["mastodon"].PlatformID)
 }
 
 type deleteCall struct {

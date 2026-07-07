@@ -56,6 +56,11 @@ type Store interface {
 	UpdateSyncStatus(ctx context.Context, id, platform string, status CrossPostStatus) error
 	// SetSyncPending flips the worker's pending flag for a post.
 	SetSyncPending(ctx context.Context, id string, pending bool) error
+	// RemoveSyncStatus removes a single platform's cross-post status entry.
+	RemoveSyncStatus(ctx context.Context, id, platform string) error
+	// ListPendingDelete returns posts in "deleting" status that still need
+	// platform-side cleanup.
+	ListPendingDelete(ctx context.Context) ([]*Post, error)
 }
 
 // ComputeSyncPending reports whether the publish worker still has work to do

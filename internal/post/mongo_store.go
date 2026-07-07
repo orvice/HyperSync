@@ -224,6 +224,54 @@ func (s *MongoStore) ListPendingSync(ctx context.Context) ([]*Post, error) {
 	return posts, nil
 }
 
+func (s *MongoStore) RemoveSyncStatus(ctx context.Context, id, platform string) error {
+	oid, err := bson.ObjectIDFromHex(id)
+	if err != nil {
+		return ErrNotFound
+	}
+
+	update := bson.M{"$unset": bson.M{
+		"cross_post_status." + platform: "",
+	}}
+
+	result, err := s.col().UpdateOne(ctx, bson.M{"_id": oid}, update)
+	if err != nil {
+		return err
+	}
+	if result.MatchedCount == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *MongoStore) ListPendingDelete(ctx context.Context) ([]*Post, error) {
+	filter := bson.M{
+		"status":       "deleting",
+		"sync_pending": true,
+	}
+
+	findOpts := options.Find().
+		SetSort(bson.D{{Key: "updated_at", Value: 1}}).
+		SetLimit(200)
+
+	cursor, err := s.col().Find(ctx, filter, findOpts)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var docs []postDocument
+	if err := cursor.All(ctx, &docs); err != nil {
+		return nil, err
+	}
+
+	var posts []*Post
+	for i := range docs {
+		posts = append(posts, fromDocument(&docs[i]))
+	}
+	return posts, nil
+}
+
 type postDocument struct {
 	ID              bson.ObjectID                 `bson:"_id,omitempty"`
 	Content         string                        `bson:"content"`

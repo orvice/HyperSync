@@ -15,20 +15,33 @@ import (
 // stall the single worker goroutine forever.
 const syncPostTimeout = 2 * time.Minute
 
+type PublishWorkerOption func(*PublishWorker)
+
+func WithWorkerDeleter(d PlatformDeleter) PublishWorkerOption {
+	return func(w *PublishWorker) {
+		w.deleter = d
+	}
+}
+
 type PublishWorker struct {
 	store      post.Store
 	mediaStore media.Store
 	clients    map[string]social.SocialClient
+	deleter    PlatformDeleter
 	maxRetries int
 }
 
-func NewPublishWorker(store post.Store, mediaStore media.Store, clients map[string]social.SocialClient, maxRetries int) *PublishWorker {
-	return &PublishWorker{
+func NewPublishWorker(store post.Store, mediaStore media.Store, clients map[string]social.SocialClient, maxRetries int, opts ...PublishWorkerOption) *PublishWorker {
+	w := &PublishWorker{
 		store:      store,
 		mediaStore: mediaStore,
 		clients:    clients,
 		maxRetries: maxRetries,
 	}
+	for _, opt := range opts {
+		opt(w)
+	}
+	return w
 }
 
 func (w *PublishWorker) Run(ctx context.Context) error {
@@ -39,7 +52,6 @@ func (w *PublishWorker) Run(ctx context.Context) error {
 
 	for _, p := range posts {
 		if !shouldSync(p.Visibility) {
-			// Not syncable — clear the flag so it isn't refetched every tick.
 			if err := w.store.SetSyncPending(ctx, p.ID, false); err != nil {
 				slog.Warn("failed to clear sync_pending", "post_id", p.ID, "error", err)
 			}
@@ -48,6 +60,10 @@ func (w *PublishWorker) Run(ctx context.Context) error {
 		pctx, cancel := context.WithTimeout(ctx, syncPostTimeout)
 		w.syncPost(pctx, p)
 		cancel()
+	}
+
+	if err := w.processDeletingPosts(ctx); err != nil {
+		return fmt.Errorf("process deleting posts: %w", err)
 	}
 
 	return nil
@@ -141,6 +157,68 @@ func (w *PublishWorker) syncPost(ctx context.Context, p *post.Post) {
 func (w *PublishWorker) persistStatus(ctx context.Context, postID, platform string, status post.CrossPostStatus) {
 	if err := w.store.UpdateSyncStatus(ctx, postID, platform, status); err != nil {
 		slog.Error("failed to persist sync status", "post_id", postID, "platform", platform, "error", err)
+	}
+}
+
+func (w *PublishWorker) processDeletingPosts(ctx context.Context) error {
+	if w.deleter == nil {
+		return nil
+	}
+
+	posts, err := w.store.ListPendingDelete(ctx)
+	if err != nil {
+		return fmt.Errorf("list pending delete: %w", err)
+	}
+
+	for _, p := range posts {
+		pctx, cancel := context.WithTimeout(ctx, syncPostTimeout)
+		w.retryDeletes(pctx, p)
+		cancel()
+	}
+	return nil
+}
+
+func (w *PublishWorker) retryDeletes(ctx context.Context, p *post.Post) {
+	allDone := true
+
+	for platform, status := range p.CrossPostStatus {
+		if status.PlatformID == "" {
+			continue
+		}
+		if status.RetryCount >= w.maxRetries {
+			continue
+		}
+
+		if err := w.deleter.DeleteFromPlatform(ctx, platform, status.PlatformID); err != nil {
+			status.RetryCount++
+			status.Error = err.Error()
+			p.CrossPostStatus[platform] = status
+			w.persistStatus(ctx, p.ID, platform, status)
+			slog.Error("retry cascade delete failed", "platform", platform, "post_id", p.ID, "retry", status.RetryCount, "error", err)
+
+			if status.RetryCount < w.maxRetries {
+				allDone = false
+			}
+		} else {
+			delete(p.CrossPostStatus, platform)
+			if err := w.store.RemoveSyncStatus(ctx, p.ID, platform); err != nil {
+				slog.Error("failed to remove sync status after successful delete", "post_id", p.ID, "platform", platform, "error", err)
+			}
+			slog.Info("retry cascade delete succeeded", "platform", platform, "post_id", p.ID)
+		}
+	}
+
+	if allDone || len(p.CrossPostStatus) == 0 {
+		if len(p.CrossPostStatus) > 0 {
+			slog.Warn("deleting post with exhausted platform retries", "post_id", p.ID, "remaining_platforms", len(p.CrossPostStatus))
+		}
+		if err := w.store.Delete(ctx, p.ID); err != nil {
+			slog.Error("failed to delete post after cascade cleanup", "post_id", p.ID, "error", err)
+		}
+	} else {
+		if err := w.store.SetSyncPending(ctx, p.ID, true); err != nil {
+			slog.Warn("failed to update sync_pending for deleting post", "post_id", p.ID, "error", err)
+		}
 	}
 }
 

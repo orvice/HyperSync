@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -47,10 +48,10 @@ func (m *mockSocialClient) Update(_ context.Context, platformID string, p *socia
 	return m.updateErr
 }
 
-func setupPublishWorkerTest(t *testing.T, clients map[string]social.SocialClient) (*service.PublishWorker, *post.MemoryStore) {
+func setupPublishWorkerTest(t *testing.T, clients map[string]social.SocialClient, opts ...service.PublishWorkerOption) (*service.PublishWorker, *post.MemoryStore) {
 	t.Helper()
 	store := post.NewMemoryStore()
-	worker := service.NewPublishWorker(store, nil, clients, 3)
+	worker := service.NewPublishWorker(store, nil, clients, 3, opts...)
 	return worker, store
 }
 
@@ -239,4 +240,118 @@ func TestPublishWorker_NeedsUpdate_ClearsFlag(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, updated.CrossPostStatus["mastodon"].NeedsUpdate)
 	assert.True(t, updated.CrossPostStatus["mastodon"].Success)
+}
+
+func TestPublishWorker_DeletingPost_AllPlatformDeletesSucceed_RemovesPost(t *testing.T) {
+	deleter := &mockPlatformDeleter{results: map[string]error{}}
+	worker, store := setupPublishWorkerTest(t, nil, service.WithWorkerDeleter(deleter))
+
+	created, err := store.Create(context.Background(), &post.Post{
+		Content:    "Being deleted",
+		Visibility: "public",
+		Status:     "deleting",
+		SyncPending: true,
+		CrossPostStatus: map[string]post.CrossPostStatus{
+			"mastodon": {PlatformID: "masto-111", RetryCount: 1},
+		},
+	})
+	require.NoError(t, err)
+
+	err = worker.Run(context.Background())
+	require.NoError(t, err)
+
+	// Platform delete should have been called
+	assert.Contains(t, deleter.calls, deleteCall{platform: "mastodon", platformID: "masto-111"})
+
+	// Post should be deleted locally
+	_, err = store.GetByID(context.Background(), created.ID)
+	assert.ErrorIs(t, err, post.ErrNotFound)
+}
+
+func TestPublishWorker_DeletingPost_PlatformDeleteFails_IncrementsRetryCount(t *testing.T) {
+	deleter := &mockPlatformDeleter{results: map[string]error{
+		"mastodon": fmt.Errorf("still failing"),
+	}}
+	worker, store := setupPublishWorkerTest(t, nil, service.WithWorkerDeleter(deleter))
+
+	created, err := store.Create(context.Background(), &post.Post{
+		Content:    "Being deleted",
+		Visibility: "public",
+		Status:     "deleting",
+		SyncPending: true,
+		CrossPostStatus: map[string]post.CrossPostStatus{
+			"mastodon": {PlatformID: "masto-111", RetryCount: 1},
+		},
+	})
+	require.NoError(t, err)
+
+	err = worker.Run(context.Background())
+	require.NoError(t, err)
+
+	// Post should still exist in "deleting" state
+	got, err := store.GetByID(context.Background(), created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "deleting", got.Status)
+	assert.Equal(t, 2, got.CrossPostStatus["mastodon"].RetryCount)
+	assert.Equal(t, "masto-111", got.CrossPostStatus["mastodon"].PlatformID)
+}
+
+func TestPublishWorker_DeletingPost_MixedRetry_PersistsSuccessfulRemoval(t *testing.T) {
+	deleter := &mockPlatformDeleter{results: map[string]error{
+		"bluesky": fmt.Errorf("still failing"),
+	}}
+	worker, store := setupPublishWorkerTest(t, nil, service.WithWorkerDeleter(deleter))
+
+	created, err := store.Create(context.Background(), &post.Post{
+		Content:    "Mixed retry",
+		Visibility: "public",
+		Status:     "deleting",
+		SyncPending: true,
+		CrossPostStatus: map[string]post.CrossPostStatus{
+			"mastodon": {PlatformID: "masto-111", RetryCount: 1},
+			"bluesky":  {PlatformID: "bsky-222", RetryCount: 1},
+		},
+	})
+	require.NoError(t, err)
+
+	err = worker.Run(context.Background())
+	require.NoError(t, err)
+
+	// Post should still exist (bluesky failed)
+	got, err := store.GetByID(context.Background(), created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "deleting", got.Status)
+
+	// Mastodon succeeded — must NOT appear in persisted CrossPostStatus
+	_, hasMasto := got.CrossPostStatus["mastodon"]
+	assert.False(t, hasMasto, "successfully deleted platform should be removed from store")
+
+	// Bluesky failed — must be preserved with incremented retry
+	assert.Equal(t, 2, got.CrossPostStatus["bluesky"].RetryCount)
+}
+
+func TestPublishWorker_DeletingPost_RetriesExhausted_RemovesPost(t *testing.T) {
+	deleter := &mockPlatformDeleter{results: map[string]error{
+		"mastodon": fmt.Errorf("permanently broken"),
+	}}
+	worker, store := setupPublishWorkerTest(t, nil, service.WithWorkerDeleter(deleter))
+
+	created, err := store.Create(context.Background(), &post.Post{
+		Content:    "Exhausted retries",
+		Visibility: "public",
+		Status:     "deleting",
+		SyncPending: true,
+		CrossPostStatus: map[string]post.CrossPostStatus{
+			"mastodon": {PlatformID: "masto-111", RetryCount: 2},
+		},
+	})
+	require.NoError(t, err)
+
+	err = worker.Run(context.Background())
+	require.NoError(t, err)
+
+	// Post should be deleted locally even though platform delete failed
+	// (retries exhausted: max=3, count was 2, now 3)
+	_, err = store.GetByID(context.Background(), created.ID)
+	assert.ErrorIs(t, err, post.ErrNotFound)
 }
