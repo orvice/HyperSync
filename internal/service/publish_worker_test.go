@@ -355,3 +355,139 @@ func TestPublishWorker_DeletingPost_RetriesExhausted_RemovesPost(t *testing.T) {
 	_, err = store.GetByID(context.Background(), created.ID)
 	assert.ErrorIs(t, err, post.ErrNotFound)
 }
+
+func TestPublishWorker_NeedsDelete_Succeeds_RemovesEntry(t *testing.T) {
+	deleter := &mockPlatformDeleter{results: map[string]error{}}
+	mastodon := &mockSocialClient{name: "mastodon"}
+	clients := map[string]social.SocialClient{"mastodon": mastodon}
+	worker, store := setupPublishWorkerTest(t, clients, service.WithWorkerDeleter(deleter))
+
+	created, err := store.Create(context.Background(), &post.Post{
+		Content:     "Still published",
+		Visibility:  "public",
+		Status:      "published",
+		SyncPending: true,
+		SyncTargets: []string{"mastodon"},
+		CrossPostStatus: map[string]post.CrossPostStatus{
+			"mastodon": {Success: true, PlatformID: "masto-123"},
+			"bluesky":  {Success: true, PlatformID: "bsky-456", NeedsDelete: true, RetryCount: 1},
+		},
+	})
+	require.NoError(t, err)
+
+	err = worker.Run(context.Background())
+	require.NoError(t, err)
+
+	// Platform delete should have been called for bluesky
+	assert.Contains(t, deleter.calls, deleteCall{platform: "bluesky", platformID: "bsky-456"})
+
+	// Bluesky entry should be removed from the post
+	got, err := store.GetByID(context.Background(), created.ID)
+	require.NoError(t, err)
+	_, hasBsky := got.CrossPostStatus["bluesky"]
+	assert.False(t, hasBsky, "successfully deleted NeedsDelete entry should be removed")
+
+	// Mastodon should be untouched
+	assert.True(t, got.CrossPostStatus["mastodon"].Success)
+}
+
+func TestPublishWorker_NeedsDelete_Fails_IncrementsRetryCount(t *testing.T) {
+	deleter := &mockPlatformDeleter{results: map[string]error{
+		"bluesky": fmt.Errorf("still failing"),
+	}}
+	mastodon := &mockSocialClient{name: "mastodon"}
+	clients := map[string]social.SocialClient{"mastodon": mastodon}
+	worker, store := setupPublishWorkerTest(t, clients, service.WithWorkerDeleter(deleter))
+
+	created, err := store.Create(context.Background(), &post.Post{
+		Content:     "Still published",
+		Visibility:  "public",
+		Status:      "published",
+		SyncPending: true,
+		SyncTargets: []string{"mastodon"},
+		CrossPostStatus: map[string]post.CrossPostStatus{
+			"mastodon": {Success: true, PlatformID: "masto-123"},
+			"bluesky":  {Success: true, PlatformID: "bsky-456", NeedsDelete: true, RetryCount: 1},
+		},
+	})
+	require.NoError(t, err)
+
+	err = worker.Run(context.Background())
+	require.NoError(t, err)
+
+	got, err := store.GetByID(context.Background(), created.ID)
+	require.NoError(t, err)
+
+	// Bluesky should still exist with incremented retry count
+	bsky := got.CrossPostStatus["bluesky"]
+	assert.True(t, bsky.NeedsDelete)
+	assert.Equal(t, 2, bsky.RetryCount)
+	assert.Equal(t, "bsky-456", bsky.PlatformID)
+}
+
+func TestPublishWorker_NeedsDelete_LastTargetRemoved_StillProcessed(t *testing.T) {
+	deleter := &mockPlatformDeleter{results: map[string]error{}}
+	clients := map[string]social.SocialClient{}
+	worker, store := setupPublishWorkerTest(t, clients, service.WithWorkerDeleter(deleter))
+
+	// Post where the only target was removed, immediate delete failed,
+	// so SyncTargets is empty but NeedsDelete entry remains.
+	created, err := store.Create(context.Background(), &post.Post{
+		Content:     "All targets removed",
+		Visibility:  "public",
+		Status:      "published",
+		SyncPending: true,
+		SyncTargets: []string{},
+		CrossPostStatus: map[string]post.CrossPostStatus{
+			"bluesky": {Success: false, PlatformID: "bsky-456", NeedsDelete: true, RetryCount: 1},
+		},
+	})
+	require.NoError(t, err)
+
+	err = worker.Run(context.Background())
+	require.NoError(t, err)
+
+	// The worker must have processed this post despite empty SyncTargets
+	assert.Contains(t, deleter.calls, deleteCall{platform: "bluesky", platformID: "bsky-456"})
+
+	got, err := store.GetByID(context.Background(), created.ID)
+	require.NoError(t, err)
+	_, hasBsky := got.CrossPostStatus["bluesky"]
+	assert.False(t, hasBsky, "NeedsDelete entry should be removed after successful delete")
+	assert.False(t, got.SyncPending, "SyncPending should be cleared after all NeedsDelete entries resolved")
+}
+
+func TestPublishWorker_NeedsDelete_RetriesExhausted_RemovesEntry(t *testing.T) {
+	deleter := &mockPlatformDeleter{results: map[string]error{
+		"bluesky": fmt.Errorf("permanently broken"),
+	}}
+	mastodon := &mockSocialClient{name: "mastodon"}
+	clients := map[string]social.SocialClient{"mastodon": mastodon}
+	worker, store := setupPublishWorkerTest(t, clients, service.WithWorkerDeleter(deleter))
+
+	created, err := store.Create(context.Background(), &post.Post{
+		Content:     "Still published",
+		Visibility:  "public",
+		Status:      "published",
+		SyncPending: true,
+		SyncTargets: []string{"mastodon"},
+		CrossPostStatus: map[string]post.CrossPostStatus{
+			"mastodon": {Success: true, PlatformID: "masto-123"},
+			"bluesky":  {Success: false, PlatformID: "bsky-456", NeedsDelete: true, RetryCount: 2},
+		},
+	})
+	require.NoError(t, err)
+
+	err = worker.Run(context.Background())
+	require.NoError(t, err)
+
+	got, err := store.GetByID(context.Background(), created.ID)
+	require.NoError(t, err)
+
+	// Bluesky should be removed — retries exhausted (count was 2, now 3 = max)
+	_, hasBsky := got.CrossPostStatus["bluesky"]
+	assert.False(t, hasBsky, "NeedsDelete entry with exhausted retries should be cleaned up")
+
+	// Mastodon untouched
+	assert.True(t, got.CrossPostStatus["mastodon"].Success)
+}

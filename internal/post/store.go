@@ -30,6 +30,7 @@ type CrossPostStatus struct {
 	PostedAt    *time.Time
 	RetryCount  int
 	NeedsUpdate bool
+	NeedsDelete bool
 }
 
 type ListOptions struct {
@@ -66,7 +67,7 @@ type Store interface {
 // ComputeSyncPending reports whether the publish worker still has work to do
 // for this post given the retry budget.
 func ComputeSyncPending(p *Post, maxRetries int) bool {
-	if p.Status != "published" || len(p.SyncTargets) == 0 {
+	if p.Status != "published" {
 		return false
 	}
 	for _, target := range p.SyncTargets {
@@ -78,6 +79,12 @@ func ComputeSyncPending(p *Post, maxRetries int) bool {
 			continue
 		}
 		if !status.Success || status.NeedsUpdate {
+			return true
+		}
+	}
+	// NeedsDelete entries live outside SyncTargets — check them separately.
+	for _, status := range p.CrossPostStatus {
+		if status.NeedsDelete && status.RetryCount < maxRetries {
 			return true
 		}
 	}

@@ -306,6 +306,8 @@ func (m *CrossPostStatus) validate(all bool) error {
 
 	// no validation rules for NeedsUpdate
 
+	// no validation rules for NeedsDelete
+
 	if len(errors) > 0 {
 		return CrossPostStatusMultiError(errors)
 	}

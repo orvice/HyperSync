@@ -168,9 +168,6 @@ func (s *MemoryStore) ListPendingSync(_ context.Context) ([]*Post, error) {
 		if p.Status != "published" || !p.SyncPending {
 			continue
 		}
-		if len(p.SyncTargets) == 0 {
-			continue
-		}
 		result = append(result, clonePost(p))
 	}
 	return result, nil
