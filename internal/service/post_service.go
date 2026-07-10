@@ -131,6 +131,11 @@ func (s *PostService) UpdatePost(ctx context.Context, req *connect.Request[v1.Up
 		!slices.Equal(existing.MediaIDs, req.Msg.MediaIds)
 	targetsChanged := !slices.Equal(existing.SyncTargets, req.Msg.SyncTargets)
 
+	// Detect targets removed from a published post and handle platform cleanup.
+	if existing.Status == "published" && targetsChanged {
+		s.handleRemovedTargets(ctx, existing, req.Msg.SyncTargets)
+	}
+
 	existing.Content = req.Msg.Content
 	existing.Visibility = visibility
 	existing.MediaIDs = req.Msg.MediaIds
@@ -138,9 +143,13 @@ func (s *PostService) UpdatePost(ctx context.Context, req *connect.Request[v1.Up
 
 	// Mark already-synced platforms as needs_update when content changes on a
 	// published post. Resetting the retry budget also gives permanently failed
-	// platforms a fresh chance after an edit.
+	// platforms a fresh chance after an edit. Skip NeedsDelete entries — they
+	// are pending removal, not content updates.
 	if existing.Status == "published" && contentChanged {
 		for platform, status := range existing.CrossPostStatus {
+			if status.NeedsDelete {
+				continue
+			}
 			if status.Success && status.PlatformID != "" {
 				status.NeedsUpdate = true
 			}
@@ -148,8 +157,17 @@ func (s *PostService) UpdatePost(ctx context.Context, req *connect.Request[v1.Up
 			existing.CrossPostStatus[platform] = status
 		}
 	}
-	if existing.Status == "published" && (contentChanged || targetsChanged) && len(existing.SyncTargets) > 0 {
-		existing.SyncPending = true
+	if existing.Status == "published" && (contentChanged || targetsChanged) {
+		hasPendingWork := len(existing.SyncTargets) > 0
+		for _, status := range existing.CrossPostStatus {
+			if status.NeedsDelete {
+				hasPendingWork = true
+				break
+			}
+		}
+		if hasPendingWork {
+			existing.SyncPending = true
+		}
 	}
 
 	updated, err := s.store.Update(ctx, existing)
@@ -277,6 +295,41 @@ func (s *PostService) retryCascadeDelete(ctx context.Context, existing *post.Pos
 	return connect.NewResponse(&v1.DeletePostResponse{}), nil
 }
 
+func (s *PostService) handleRemovedTargets(ctx context.Context, existing *post.Post, newTargets []string) {
+	newSet := make(map[string]bool, len(newTargets))
+	for _, t := range newTargets {
+		newSet[t] = true
+	}
+
+	for _, old := range existing.SyncTargets {
+		if newSet[old] {
+			continue
+		}
+		status, has := existing.CrossPostStatus[old]
+		if !has {
+			continue
+		}
+		if !status.Success || status.PlatformID == "" {
+			delete(existing.CrossPostStatus, old)
+			continue
+		}
+		// Successfully synced target — attempt platform deletion.
+		if s.deleter != nil {
+			if err := s.deleter.DeleteFromPlatform(ctx, old, status.PlatformID); err != nil {
+				slog.Error("target removal: platform delete failed", "platform", old, "platform_id", status.PlatformID, "error", err)
+				status.NeedsDelete = true
+				status.Success = false
+				status.RetryCount++
+				status.Error = err.Error()
+				existing.CrossPostStatus[old] = status
+				existing.SyncPending = true
+				continue
+			}
+		}
+		delete(existing.CrossPostStatus, old)
+	}
+}
+
 var (
 	validStatuses   = map[string]bool{"draft": true, "published": true}
 	validVisibility = map[string]bool{"public": true, "unlisted": true, "private": true, "direct": true}
@@ -312,6 +365,7 @@ func postToProto(p *post.Post) *v1.Post {
 			PlatformId:  status.PlatformID,
 			RetryCount:  int32(status.RetryCount),
 			NeedsUpdate: status.NeedsUpdate,
+			NeedsDelete: status.NeedsDelete,
 		}
 		if status.PostedAt != nil {
 			cs.PostedAt = timestamppb.New(*status.PostedAt)

@@ -144,8 +144,26 @@ func (w *PublishWorker) syncPost(ctx context.Context, p *post.Post) {
 		w.persistStatus(ctx, p.ID, target, status)
 	}
 
-	// Recompute the pending flag from the fresh local state so fully synced
-	// (or retry-exhausted) posts drop out of the next tick's query.
+	// Process NeedsDelete entries left by target removal: retry or clean up.
+	if w.deleter != nil {
+		for platform, status := range p.CrossPostStatus {
+			if !status.NeedsDelete || status.PlatformID == "" {
+				continue
+			}
+			if status.RetryCount >= w.maxRetries {
+				slog.Warn("giving up on target-removal delete, removing stale entry", "platform", platform, "post_id", p.ID, "platform_id", status.PlatformID)
+				w.removeStatusEntry(ctx, p, platform)
+				continue
+			}
+			if !w.tryDeleteFromPlatform(ctx, p, platform, "retry target-removal delete") {
+				if p.CrossPostStatus[platform].RetryCount >= w.maxRetries {
+					slog.Warn("giving up on target-removal delete, removing stale entry", "platform", platform, "post_id", p.ID, "platform_id", status.PlatformID)
+					w.removeStatusEntry(ctx, p, platform)
+				}
+			}
+		}
+	}
+
 	pending := post.ComputeSyncPending(p, w.maxRetries)
 	if err := w.store.SetSyncPending(ctx, p.ID, pending); err != nil {
 		slog.Warn("failed to update sync_pending", "post_id", p.ID, "error", err)
@@ -189,22 +207,10 @@ func (w *PublishWorker) retryDeletes(ctx context.Context, p *post.Post) {
 			continue
 		}
 
-		if err := w.deleter.DeleteFromPlatform(ctx, platform, status.PlatformID); err != nil {
-			status.RetryCount++
-			status.Error = err.Error()
-			p.CrossPostStatus[platform] = status
-			w.persistStatus(ctx, p.ID, platform, status)
-			slog.Error("retry cascade delete failed", "platform", platform, "post_id", p.ID, "retry", status.RetryCount, "error", err)
-
-			if status.RetryCount < w.maxRetries {
+		if !w.tryDeleteFromPlatform(ctx, p, platform, "retry cascade delete") {
+			if p.CrossPostStatus[platform].RetryCount < w.maxRetries {
 				allDone = false
 			}
-		} else {
-			delete(p.CrossPostStatus, platform)
-			if err := w.store.RemoveSyncStatus(ctx, p.ID, platform); err != nil {
-				slog.Error("failed to remove sync status after successful delete", "post_id", p.ID, "platform", platform, "error", err)
-			}
-			slog.Info("retry cascade delete succeeded", "platform", platform, "post_id", p.ID)
 		}
 	}
 
@@ -219,6 +225,31 @@ func (w *PublishWorker) retryDeletes(ctx context.Context, p *post.Post) {
 		if err := w.store.SetSyncPending(ctx, p.ID, true); err != nil {
 			slog.Warn("failed to update sync_pending for deleting post", "post_id", p.ID, "error", err)
 		}
+	}
+}
+
+// tryDeleteFromPlatform attempts to delete a post from a single platform.
+// On success: removes the entry from both in-memory map and store, returns true.
+// On failure: increments RetryCount and persists the error, returns false.
+func (w *PublishWorker) tryDeleteFromPlatform(ctx context.Context, p *post.Post, platform, logPrefix string) bool {
+	status := p.CrossPostStatus[platform]
+	if err := w.deleter.DeleteFromPlatform(ctx, platform, status.PlatformID); err != nil {
+		status.RetryCount++
+		status.Error = err.Error()
+		p.CrossPostStatus[platform] = status
+		w.persistStatus(ctx, p.ID, platform, status)
+		slog.Error(logPrefix+" failed", "platform", platform, "post_id", p.ID, "retry", status.RetryCount, "error", err)
+		return false
+	}
+	w.removeStatusEntry(ctx, p, platform)
+	slog.Info(logPrefix+" succeeded", "platform", platform, "post_id", p.ID)
+	return true
+}
+
+func (w *PublishWorker) removeStatusEntry(ctx context.Context, p *post.Post, platform string) {
+	delete(p.CrossPostStatus, platform)
+	if err := w.store.RemoveSyncStatus(ctx, p.ID, platform); err != nil {
+		slog.Error("failed to remove sync status entry", "post_id", p.ID, "platform", platform, "error", err)
 	}
 }
 

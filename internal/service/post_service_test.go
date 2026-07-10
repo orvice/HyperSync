@@ -236,6 +236,232 @@ func TestUpdatePost_DraftPost_DoesNotMarkNeedsUpdate(t *testing.T) {
 	assert.Empty(t, resp.Msg.Post.CrossPostStatus)
 }
 
+func TestUpdatePost_RemoveUnsyncedTarget_DropsStatusEntry(t *testing.T) {
+	store := post.NewMemoryStore()
+	deleter := &mockPlatformDeleter{results: map[string]error{}}
+	svc := service.NewPostService(store, service.WithPlatformDeleter(deleter))
+
+	mux := http.NewServeMux()
+	path, handler := v1connect.NewPostServiceHandler(svc)
+	mux.Handle(path, handler)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	client := v1connect.NewPostServiceClient(server.Client(), server.URL)
+
+	p, err := store.Create(context.Background(), &post.Post{
+		Content:     "Has unsynced target",
+		Visibility:  "public",
+		Status:      "published",
+		SyncTargets: []string{"mastodon", "bluesky"},
+		CrossPostStatus: map[string]post.CrossPostStatus{
+			"mastodon": {Success: true, PlatformID: "masto-123"},
+			"bluesky":  {Success: false, RetryCount: 2},
+		},
+	})
+	require.NoError(t, err)
+
+	// Remove bluesky (unsynced) from targets
+	resp, err := client.UpdatePost(context.Background(), connect.NewRequest(&v1.UpdatePostRequest{
+		Id:          p.ID,
+		Content:     "Has unsynced target",
+		Visibility:  "public",
+		SyncTargets: []string{"mastodon"},
+	}))
+	require.NoError(t, err)
+
+	// Bluesky CrossPostStatus should be gone
+	_, hasBsky := resp.Msg.Post.CrossPostStatus["bluesky"]
+	assert.False(t, hasBsky, "removed unsynced target should have its status entry dropped")
+
+	// Mastodon should be untouched
+	assert.True(t, resp.Msg.Post.CrossPostStatus["mastodon"].Success)
+
+	// No platform delete calls should have been made for bluesky
+	for _, call := range deleter.calls {
+		assert.NotEqual(t, "bluesky", call.platform, "should not call delete for unsynced target")
+	}
+}
+
+func TestUpdatePost_RemoveSyncedTarget_DeleteSucceeds_DropsStatusEntry(t *testing.T) {
+	store := post.NewMemoryStore()
+	deleter := &mockPlatformDeleter{results: map[string]error{}}
+	svc := service.NewPostService(store, service.WithPlatformDeleter(deleter))
+
+	mux := http.NewServeMux()
+	path, handler := v1connect.NewPostServiceHandler(svc)
+	mux.Handle(path, handler)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	client := v1connect.NewPostServiceClient(server.Client(), server.URL)
+
+	p, err := store.Create(context.Background(), &post.Post{
+		Content:     "Synced to both",
+		Visibility:  "public",
+		Status:      "published",
+		SyncTargets: []string{"mastodon", "bluesky"},
+		CrossPostStatus: map[string]post.CrossPostStatus{
+			"mastodon": {Success: true, PlatformID: "masto-123"},
+			"bluesky":  {Success: true, PlatformID: "bsky-456"},
+		},
+	})
+	require.NoError(t, err)
+
+	// Remove bluesky
+	resp, err := client.UpdatePost(context.Background(), connect.NewRequest(&v1.UpdatePostRequest{
+		Id:          p.ID,
+		Content:     "Synced to both",
+		Visibility:  "public",
+		SyncTargets: []string{"mastodon"},
+	}))
+	require.NoError(t, err)
+
+	// Platform delete should have been called for bluesky
+	assert.Contains(t, deleter.calls, deleteCall{platform: "bluesky", platformID: "bsky-456"})
+
+	// Bluesky status entry should be gone
+	_, hasBsky := resp.Msg.Post.CrossPostStatus["bluesky"]
+	assert.False(t, hasBsky, "successfully deleted platform should have its status removed")
+
+	// Mastodon should be untouched
+	assert.True(t, resp.Msg.Post.CrossPostStatus["mastodon"].Success)
+}
+
+func TestUpdatePost_RemoveSyncedTarget_DeleteFails_PreservesWithNeedsDelete(t *testing.T) {
+	store := post.NewMemoryStore()
+	deleter := &mockPlatformDeleter{results: map[string]error{
+		"bluesky": fmt.Errorf("network error"),
+	}}
+	svc := service.NewPostService(store, service.WithPlatformDeleter(deleter))
+
+	mux := http.NewServeMux()
+	path, handler := v1connect.NewPostServiceHandler(svc)
+	mux.Handle(path, handler)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	client := v1connect.NewPostServiceClient(server.Client(), server.URL)
+
+	p, err := store.Create(context.Background(), &post.Post{
+		Content:     "Synced to both",
+		Visibility:  "public",
+		Status:      "published",
+		SyncTargets: []string{"mastodon", "bluesky"},
+		CrossPostStatus: map[string]post.CrossPostStatus{
+			"mastodon": {Success: true, PlatformID: "masto-123"},
+			"bluesky":  {Success: true, PlatformID: "bsky-456"},
+		},
+	})
+	require.NoError(t, err)
+
+	// Remove bluesky — delete will fail
+	resp, err := client.UpdatePost(context.Background(), connect.NewRequest(&v1.UpdatePostRequest{
+		Id:          p.ID,
+		Content:     "Synced to both",
+		Visibility:  "public",
+		SyncTargets: []string{"mastodon"},
+	}))
+	require.NoError(t, err)
+
+	// Bluesky status must be preserved with NeedsDelete
+	bsky := resp.Msg.Post.CrossPostStatus["bluesky"]
+	require.NotNil(t, bsky)
+	assert.True(t, bsky.NeedsDelete, "failed platform removal should set NeedsDelete")
+	assert.Equal(t, "bsky-456", bsky.PlatformId, "PlatformID must be preserved")
+	assert.Equal(t, int32(1), bsky.RetryCount)
+
+	// Verify via store that SyncPending is set
+	got, err := store.GetByID(context.Background(), p.ID)
+	require.NoError(t, err)
+	assert.True(t, got.SyncPending)
+}
+
+func TestUpdatePost_RemoveFailedSyncTarget_DropsStatusEntry(t *testing.T) {
+	store := post.NewMemoryStore()
+	deleter := &mockPlatformDeleter{results: map[string]error{}}
+	svc := service.NewPostService(store, service.WithPlatformDeleter(deleter))
+
+	mux := http.NewServeMux()
+	path, handler := v1connect.NewPostServiceHandler(svc)
+	mux.Handle(path, handler)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	client := v1connect.NewPostServiceClient(server.Client(), server.URL)
+
+	p, err := store.Create(context.Background(), &post.Post{
+		Content:     "Has failed target",
+		Visibility:  "public",
+		Status:      "published",
+		SyncTargets: []string{"mastodon", "bluesky"},
+		CrossPostStatus: map[string]post.CrossPostStatus{
+			"mastodon": {Success: true, PlatformID: "masto-123"},
+			"bluesky":  {Success: false, Error: "failed", PlatformID: ""},
+		},
+	})
+	require.NoError(t, err)
+
+	// Remove bluesky (failed, no PlatformID)
+	resp, err := client.UpdatePost(context.Background(), connect.NewRequest(&v1.UpdatePostRequest{
+		Id:          p.ID,
+		Content:     "Has failed target",
+		Visibility:  "public",
+		SyncTargets: []string{"mastodon"},
+	}))
+	require.NoError(t, err)
+
+	// Bluesky entry should be dropped, no platform call
+	_, hasBsky := resp.Msg.Post.CrossPostStatus["bluesky"]
+	assert.False(t, hasBsky)
+	assert.Empty(t, deleter.calls, "should not call delete for failed-sync target with no PlatformID")
+}
+
+func TestUpdatePost_RemoveTargetAndChangeContent_NeedsDeleteNotClobbered(t *testing.T) {
+	store := post.NewMemoryStore()
+	deleter := &mockPlatformDeleter{results: map[string]error{
+		"bluesky": fmt.Errorf("network error"),
+	}}
+	svc := service.NewPostService(store, service.WithPlatformDeleter(deleter))
+
+	mux := http.NewServeMux()
+	path, handler := v1connect.NewPostServiceHandler(svc)
+	mux.Handle(path, handler)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	client := v1connect.NewPostServiceClient(server.Client(), server.URL)
+
+	p, err := store.Create(context.Background(), &post.Post{
+		Content:     "Original content",
+		Visibility:  "public",
+		Status:      "published",
+		SyncTargets: []string{"mastodon", "bluesky"},
+		CrossPostStatus: map[string]post.CrossPostStatus{
+			"mastodon": {Success: true, PlatformID: "masto-123"},
+			"bluesky":  {Success: true, PlatformID: "bsky-456"},
+		},
+	})
+	require.NoError(t, err)
+
+	// Remove bluesky AND change content in the same call
+	resp, err := client.UpdatePost(context.Background(), connect.NewRequest(&v1.UpdatePostRequest{
+		Id:          p.ID,
+		Content:     "Changed content",
+		Visibility:  "public",
+		SyncTargets: []string{"mastodon"},
+	}))
+	require.NoError(t, err)
+
+	// Bluesky NeedsDelete entry must not be clobbered by the content-change loop
+	bsky := resp.Msg.Post.CrossPostStatus["bluesky"]
+	require.NotNil(t, bsky)
+	assert.True(t, bsky.NeedsDelete)
+	assert.False(t, bsky.Success, "Success should be cleared on NeedsDelete entry")
+	assert.Equal(t, int32(1), bsky.RetryCount, "RetryCount must not be reset to 0")
+	assert.False(t, bsky.NeedsUpdate, "NeedsDelete entry must not get NeedsUpdate")
+
+	// Mastodon should get NeedsUpdate from content change
+	masto := resp.Msg.Post.CrossPostStatus["mastodon"]
+	require.NotNil(t, masto)
+	assert.True(t, masto.NeedsUpdate)
+}
+
 func TestUpdatePost_DeletingPost_RejectsUpdate(t *testing.T) {
 	store := post.NewMemoryStore()
 	svc := service.NewPostService(store)
