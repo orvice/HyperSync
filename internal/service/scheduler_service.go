@@ -60,7 +60,8 @@ func (s *SchedulerService) RefreshAllTokens(ctx context.Context) {
 		logger.Warn("Failed to obtain token refresh lock, skipping", "error", err)
 		return
 	}
-	defer lock.Release(ctx)
+	// 即使 ctx 在关停时已被取消，也要确保锁能正常释放
+	defer lock.Release(context.WithoutCancel(ctx))
 
 	logger.Info("Starting token refresh for all platforms")
 

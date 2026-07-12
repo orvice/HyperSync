@@ -56,7 +56,8 @@ func (s *SyncService) Sync(ctx context.Context) error {
 		}
 		return nil
 	}
-	defer lock.Release(ctx)
+	// 即使 ctx 在关停时已被取消，也要确保锁能正常释放
+	defer lock.Release(context.WithoutCancel(ctx))
 
 	// 后台看门狗：定期续期锁，防止 doSync 运行超过 TTL 后锁被其他实例抢占，
 	// 从而导致重复发帖。在 doSync 返回时停止续期。

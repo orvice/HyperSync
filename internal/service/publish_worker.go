@@ -51,13 +51,18 @@ func (w *PublishWorker) Run(ctx context.Context) error {
 	}
 
 	for _, p := range posts {
+		if ctx.Err() != nil {
+			return nil
+		}
 		if !shouldSync(p.Visibility) {
 			if err := w.store.SetSyncPending(ctx, p.ID, false); err != nil {
 				slog.Warn("failed to clear sync_pending", "post_id", p.ID, "error", err)
 			}
 			continue
 		}
-		pctx, cancel := context.WithTimeout(ctx, syncPostTimeout)
+		// Detached from ctx so a shutdown mid-post cannot cancel between a
+		// platform write and its status persist; the timeout still bounds it.
+		pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), syncPostTimeout)
 		w.syncPost(pctx, p)
 		cancel()
 	}
@@ -189,7 +194,10 @@ func (w *PublishWorker) processDeletingPosts(ctx context.Context) error {
 	}
 
 	for _, p := range posts {
-		pctx, cancel := context.WithTimeout(ctx, syncPostTimeout)
+		if ctx.Err() != nil {
+			return nil
+		}
+		pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), syncPostTimeout)
 		w.retryDeletes(pctx, p)
 		cancel()
 	}
