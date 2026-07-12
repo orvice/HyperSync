@@ -24,6 +24,7 @@ message CrossPostStatus {
   google.protobuf.Timestamp posted_at = 4;
   int32 retry_count = 5;
   bool needs_update = 6;
+  bool needs_delete = 7;
 }
 
 message CreatePostRequest {

@@ -3,6 +3,10 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 	"time"
 
 	"butterfly.orx.me/core"
@@ -18,9 +22,31 @@ import (
 	"go.orx.me/apps/hyper-sync/internal/service"
 	"go.orx.me/apps/hyper-sync/internal/social"
 	"go.orx.me/apps/hyper-sync/internal/wire"
+	"go.orx.me/apps/hyper-sync/internal/worker"
 )
 
-// Global API server instance
+// shutdownCtx is cancelled on SIGINT/SIGTERM; every background worker loop
+// derives from it. Butterfly core exposes no shutdown hook (TeardownFunc is
+// never invoked), so the process owns its own signal handling. Set in main
+// before app.Run invokes the Init funcs.
+var shutdownCtx context.Context
+
+// workerWG tracks running worker loops so main can drain them on shutdown.
+var workerWG sync.WaitGroup
+
+// drainTimeout bounds the shutdown wait for in-flight worker iterations. The
+// publish worker caps per-post work at 2 minutes; this leaves headroom.
+const drainTimeout = 3 * time.Minute
+
+// startWorker runs fn immediately and then on every interval tick until
+// shutdown, registering the loop with workerWG so main can drain it.
+func startWorker(interval time.Duration, fn func(context.Context)) {
+	workerWG.Add(1)
+	go func() {
+		defer workerWG.Done()
+		worker.RunLoop(shutdownCtx, interval, fn)
+	}()
+}
 
 func NewApp() *app.App {
 	appCore := core.New(&app.Config{
@@ -39,6 +65,31 @@ func NewApp() *app.App {
 }
 
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	shutdownCtx = ctx
+
+	go func() {
+		<-ctx.Done()
+		stop() // restore default handling so a second signal kills immediately
+
+		logger := log.FromContext(context.Background())
+		logger.Info("Shutdown signal received, draining background workers")
+
+		done := make(chan struct{})
+		go func() {
+			workerWG.Wait()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			logger.Info("Background workers stopped")
+		case <-time.After(drainTimeout):
+			logger.Warn("Timed out waiting for background workers, exiting anyway")
+		}
+		os.Exit(0)
+	}()
+
 	app := NewApp()
 	app.Run()
 }
@@ -114,11 +165,13 @@ func InitTokenRefresh() error {
 
 	// 启动 token 刷新定时任务
 	// 每10分钟检查一次 token 状态
+	// StartTokenRefreshScheduler 自带 ticker 循环并在 ctx.Done() 时退出
+	workerWG.Add(1)
 	go func() {
-		ctx := context.Background()
+		defer workerWG.Done()
 		interval := time.Minute * 10
 		logger.Info("Starting token refresh scheduler", "interval", interval)
-		schedulerService.StartTokenRefreshScheduler(ctx, interval)
+		schedulerService.StartTokenRefreshScheduler(shutdownCtx, interval)
 	}()
 
 	logger.Info("Token refresh scheduler initialized successfully")
@@ -156,20 +209,14 @@ func InitPublishWorker() error {
 		interval = conf.Conf.Sync.Interval
 	}
 
-	worker := service.NewPublishWorker(postStore, mediaStore, clients, maxRetries)
+	deleter := service.NewSocialPlatformDeleter(clients)
+	publishWorker := service.NewPublishWorker(postStore, mediaStore, clients, maxRetries, service.WithWorkerDeleter(deleter))
 
-	go func() {
-		ctx := context.Background()
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-
-		for {
-			if err := worker.Run(ctx); err != nil {
-				logger.Error("Publish worker failed", "error", err)
-			}
-			<-ticker.C
+	startWorker(interval, func(ctx context.Context) {
+		if err := publishWorker.Run(ctx); err != nil {
+			logger.Error("Publish worker failed", "error", err)
 		}
-	}()
+	})
 
 	logger.Info("Publish worker started", "interval", interval, "max_retries", maxRetries)
 	return nil
@@ -189,20 +236,12 @@ func runJob(mainSocial string, socials []string) error {
 		interval = conf.Conf.Sync.Interval
 	}
 
-	go func() {
-		ctx := context.Background()
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-
-		for {
-			err := syncService.Sync(ctx)
-			if err != nil {
-				logger.Error("Sync failed",
-					"error", err)
-			}
-			<-ticker.C
+	startWorker(interval, func(ctx context.Context) {
+		if err := syncService.Sync(ctx); err != nil {
+			logger.Error("Sync failed",
+				"error", err)
 		}
-	}()
+	})
 
 	return nil
 }

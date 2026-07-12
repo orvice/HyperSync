@@ -139,6 +139,7 @@ func (s *MongoStore) UpdateSyncStatus(ctx context.Context, id, platform string, 
 			PostedAt:    status.PostedAt,
 			RetryCount:  status.RetryCount,
 			NeedsUpdate: status.NeedsUpdate,
+			NeedsDelete: status.NeedsDelete,
 		},
 	}}
 
@@ -196,10 +197,61 @@ func (s *MongoStore) Delete(ctx context.Context, id string) error {
 func (s *MongoStore) ListPendingSync(ctx context.Context) ([]*Post, error) {
 	// Only posts flagged sync_pending by the service/worker; bounded batch so a
 	// backlog cannot turn every tick into a full-collection scan.
+	// sync_pending is the canonical gate — the service sets it when there is
+	// work (new targets, content changes, or NeedsDelete entries). Dropping
+	// the former sync_targets filter allows posts whose only remaining work
+	// is NeedsDelete cleanup (empty SyncTargets) to be picked up.
 	filter := bson.M{
 		"status":       "published",
 		"sync_pending": true,
-		"sync_targets": bson.M{"$exists": true, "$ne": bson.A{}},
+	}
+
+	findOpts := options.Find().
+		SetSort(bson.D{{Key: "updated_at", Value: 1}}).
+		SetLimit(200)
+
+	cursor, err := s.col().Find(ctx, filter, findOpts)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var docs []postDocument
+	if err := cursor.All(ctx, &docs); err != nil {
+		return nil, err
+	}
+
+	var posts []*Post
+	for i := range docs {
+		posts = append(posts, fromDocument(&docs[i]))
+	}
+	return posts, nil
+}
+
+func (s *MongoStore) RemoveSyncStatus(ctx context.Context, id, platform string) error {
+	oid, err := bson.ObjectIDFromHex(id)
+	if err != nil {
+		return ErrNotFound
+	}
+
+	update := bson.M{"$unset": bson.M{
+		"cross_post_status." + platform: "",
+	}}
+
+	result, err := s.col().UpdateOne(ctx, bson.M{"_id": oid}, update)
+	if err != nil {
+		return err
+	}
+	if result.MatchedCount == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *MongoStore) ListPendingDelete(ctx context.Context) ([]*Post, error) {
+	filter := bson.M{
+		"status":       "deleting",
+		"sync_pending": true,
 	}
 
 	findOpts := options.Find().
@@ -244,6 +296,7 @@ type crossPostStatusDoc struct {
 	PostedAt    *time.Time `bson:"posted_at,omitempty"`
 	RetryCount  int        `bson:"retry_count"`
 	NeedsUpdate bool       `bson:"needs_update"`
+	NeedsDelete bool       `bson:"needs_delete"`
 }
 
 func toDocument(p *Post) *postDocument {
@@ -268,6 +321,7 @@ func toDocument(p *Post) *postDocument {
 				PostedAt:    v.PostedAt,
 				RetryCount:  v.RetryCount,
 				NeedsUpdate: v.NeedsUpdate,
+				NeedsDelete: v.NeedsDelete,
 			}
 		}
 	}
@@ -297,6 +351,7 @@ func fromDocument(doc *postDocument) *Post {
 			PostedAt:    v.PostedAt,
 			RetryCount:  v.RetryCount,
 			NeedsUpdate: v.NeedsUpdate,
+			NeedsDelete: v.NeedsDelete,
 		}
 	}
 

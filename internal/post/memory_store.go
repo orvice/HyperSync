@@ -168,10 +168,32 @@ func (s *MemoryStore) ListPendingSync(_ context.Context) ([]*Post, error) {
 		if p.Status != "published" || !p.SyncPending {
 			continue
 		}
-		if len(p.SyncTargets) == 0 {
-			continue
-		}
 		result = append(result, clonePost(p))
+	}
+	return result, nil
+}
+
+func (s *MemoryStore) RemoveSyncStatus(_ context.Context, id, platform string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	p, ok := s.posts[id]
+	if !ok {
+		return ErrNotFound
+	}
+	delete(p.CrossPostStatus, platform)
+	return nil
+}
+
+func (s *MemoryStore) ListPendingDelete(_ context.Context) ([]*Post, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var result []*Post
+	for _, p := range s.posts {
+		if p.Status == "deleting" && p.SyncPending {
+			result = append(result, clonePost(p))
+		}
 	}
 	return result, nil
 }

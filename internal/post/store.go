@@ -30,6 +30,7 @@ type CrossPostStatus struct {
 	PostedAt    *time.Time
 	RetryCount  int
 	NeedsUpdate bool
+	NeedsDelete bool
 }
 
 type ListOptions struct {
@@ -56,12 +57,17 @@ type Store interface {
 	UpdateSyncStatus(ctx context.Context, id, platform string, status CrossPostStatus) error
 	// SetSyncPending flips the worker's pending flag for a post.
 	SetSyncPending(ctx context.Context, id string, pending bool) error
+	// RemoveSyncStatus removes a single platform's cross-post status entry.
+	RemoveSyncStatus(ctx context.Context, id, platform string) error
+	// ListPendingDelete returns posts in "deleting" status that still need
+	// platform-side cleanup.
+	ListPendingDelete(ctx context.Context) ([]*Post, error)
 }
 
 // ComputeSyncPending reports whether the publish worker still has work to do
 // for this post given the retry budget.
 func ComputeSyncPending(p *Post, maxRetries int) bool {
-	if p.Status != "published" || len(p.SyncTargets) == 0 {
+	if p.Status != "published" {
 		return false
 	}
 	for _, target := range p.SyncTargets {
@@ -73,6 +79,12 @@ func ComputeSyncPending(p *Post, maxRetries int) bool {
 			continue
 		}
 		if !status.Success || status.NeedsUpdate {
+			return true
+		}
+	}
+	// NeedsDelete entries live outside SyncTargets — check them separately.
+	for _, status := range p.CrossPostStatus {
+		if status.NeedsDelete && status.RetryCount < maxRetries {
 			return true
 		}
 	}
