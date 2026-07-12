@@ -5,8 +5,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
@@ -108,7 +110,7 @@ func setupProtectedAuthTest(t *testing.T, users ...*auth.User) (v1connect.AuthSe
 
 	jwtSecret := "test-secret-key"
 	svc := service.NewAuthService(store, jwtSecret)
-	interceptor := auth.NewAuthInterceptor(jwtSecret)
+	interceptor := auth.NewAuthInterceptor(jwtSecret, store)
 
 	mux := http.NewServeMux()
 	path, handler := v1connect.NewAuthServiceHandler(svc, connect.WithInterceptors(interceptor))
@@ -182,4 +184,148 @@ func TestProtectedEndpoint_ValidToken_Succeeds(t *testing.T) {
 	_, err = client.ChangePassword(context.Background(), req)
 
 	require.NoError(t, err)
+}
+
+func TestChangePassword_InvalidatesOutstandingTokens(t *testing.T) {
+	user := &auth.User{
+		Username:     "admin",
+		PasswordHash: hashPassword(t, "old-password"),
+	}
+	client, cleanup := setupProtectedAuthTest(t, user)
+	defer cleanup()
+
+	loginResp, err := client.Login(context.Background(), connect.NewRequest(&v1.LoginRequest{
+		Username: "admin",
+		Password: "old-password",
+	}))
+	require.NoError(t, err)
+	oldToken := loginResp.Msg.Token
+
+	req := connect.NewRequest(&v1.ChangePasswordRequest{
+		CurrentPassword: "old-password",
+		NewPassword:     "new-password-123",
+	})
+	req.Header().Set("Authorization", "Bearer "+oldToken)
+	_, err = client.ChangePassword(context.Background(), req)
+	require.NoError(t, err)
+
+	// The pre-change token must be rejected immediately, including the caller's own.
+	req2 := connect.NewRequest(&v1.ChangePasswordRequest{
+		CurrentPassword: "new-password-123",
+		NewPassword:     "another-password-456",
+	})
+	req2.Header().Set("Authorization", "Bearer "+oldToken)
+	_, err = client.ChangePassword(context.Background(), req2)
+
+	require.Error(t, err, "token issued before the password change must be rejected")
+	assert.Equal(t, connect.CodeUnauthenticated, connect.CodeOf(err))
+}
+
+func TestChangePassword_NewLoginIssuesWorkingToken(t *testing.T) {
+	user := &auth.User{
+		Username:     "admin",
+		PasswordHash: hashPassword(t, "old-password"),
+	}
+	client, cleanup := setupProtectedAuthTest(t, user)
+	defer cleanup()
+
+	loginResp, err := client.Login(context.Background(), connect.NewRequest(&v1.LoginRequest{
+		Username: "admin",
+		Password: "old-password",
+	}))
+	require.NoError(t, err)
+
+	req := connect.NewRequest(&v1.ChangePasswordRequest{
+		CurrentPassword: "old-password",
+		NewPassword:     "new-password-123",
+	})
+	req.Header().Set("Authorization", "Bearer "+loginResp.Msg.Token)
+	_, err = client.ChangePassword(context.Background(), req)
+	require.NoError(t, err)
+
+	// Re-login with the new password; the fresh token must be accepted.
+	relogin, err := client.Login(context.Background(), connect.NewRequest(&v1.LoginRequest{
+		Username: "admin",
+		Password: "new-password-123",
+	}))
+	require.NoError(t, err)
+
+	req2 := connect.NewRequest(&v1.ChangePasswordRequest{
+		CurrentPassword: "new-password-123",
+		NewPassword:     "another-password-456",
+	})
+	req2.Header().Set("Authorization", "Bearer "+relogin.Msg.Token)
+	_, err = client.ChangePassword(context.Background(), req2)
+	require.NoError(t, err, "token from a post-change login must be accepted")
+}
+
+func TestChangePassword_OtherUsersTokensUnaffected(t *testing.T) {
+	alice := &auth.User{Username: "alice", PasswordHash: hashPassword(t, "alice-password")}
+	bob := &auth.User{Username: "bob", PasswordHash: hashPassword(t, "bob-password")}
+	client, cleanup := setupProtectedAuthTest(t, alice, bob)
+	defer cleanup()
+
+	bobLogin, err := client.Login(context.Background(), connect.NewRequest(&v1.LoginRequest{
+		Username: "bob",
+		Password: "bob-password",
+	}))
+	require.NoError(t, err)
+
+	aliceLogin, err := client.Login(context.Background(), connect.NewRequest(&v1.LoginRequest{
+		Username: "alice",
+		Password: "alice-password",
+	}))
+	require.NoError(t, err)
+
+	req := connect.NewRequest(&v1.ChangePasswordRequest{
+		CurrentPassword: "alice-password",
+		NewPassword:     "alice-new-password",
+	})
+	req.Header().Set("Authorization", "Bearer "+aliceLogin.Msg.Token)
+	_, err = client.ChangePassword(context.Background(), req)
+	require.NoError(t, err)
+
+	// Bob's token predates Alice's change but belongs to an unchanged user.
+	req2 := connect.NewRequest(&v1.ChangePasswordRequest{
+		CurrentPassword: "bob-password",
+		NewPassword:     "bob-new-password",
+	})
+	req2.Header().Set("Authorization", "Bearer "+bobLogin.Msg.Token)
+	_, err = client.ChangePassword(context.Background(), req2)
+	require.NoError(t, err, "an unchanged user's token must stay valid")
+}
+
+func TestLegacyTokenWithoutVersionClaim_StillValidUntilPasswordChange(t *testing.T) {
+	user := &auth.User{
+		Username:     "admin",
+		PasswordHash: hashPassword(t, "password"),
+	}
+	client, cleanup := setupProtectedAuthTest(t, user)
+	defer cleanup()
+
+	// A token minted before versioning existed: no "ver" claim.
+	legacy := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub": "admin",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	legacyToken, err := legacy.SignedString([]byte("test-secret-key"))
+	require.NoError(t, err)
+
+	req := connect.NewRequest(&v1.ChangePasswordRequest{
+		CurrentPassword: "password",
+		NewPassword:     "new-password-123",
+	})
+	req.Header().Set("Authorization", "Bearer "+legacyToken)
+	_, err = client.ChangePassword(context.Background(), req)
+	require.NoError(t, err, "pre-versioning token must stay valid for an unchanged user")
+
+	// After the change it must be rejected like any other stale token.
+	req2 := connect.NewRequest(&v1.ChangePasswordRequest{
+		CurrentPassword: "new-password-123",
+		NewPassword:     "another-password-456",
+	})
+	req2.Header().Set("Authorization", "Bearer "+legacyToken)
+	_, err = client.ChangePassword(context.Background(), req2)
+	require.Error(t, err)
+	assert.Equal(t, connect.CodeUnauthenticated, connect.CodeOf(err))
 }

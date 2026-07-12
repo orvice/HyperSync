@@ -39,6 +39,7 @@ func (s *MongoUserStore) GetByUsername(ctx context.Context, username string) (*U
 		ID:           doc.ID.Hex(),
 		Username:     doc.Username,
 		PasswordHash: doc.PasswordHash,
+		TokenVersion: doc.TokenVersion,
 	}, nil
 }
 
@@ -56,7 +57,10 @@ func (s *MongoUserStore) UpdatePassword(ctx context.Context, username string, ne
 	result, err := s.collection().UpdateOne(
 		ctx,
 		bson.M{"username": username},
-		bson.M{"$set": bson.M{"password_hash": newHash}},
+		bson.M{
+			"$set": bson.M{"password_hash": newHash},
+			"$inc": bson.M{"token_version": 1},
+		},
 	)
 	if err != nil {
 		return err
@@ -79,4 +83,7 @@ type userDocument struct {
 	ID           bson.ObjectID `bson:"_id,omitempty"`
 	Username     string        `bson:"username"`
 	PasswordHash string        `bson:"password_hash"`
+	// Existing documents without this field decode to 0, matching tokens
+	// issued before versioning was introduced.
+	TokenVersion int64 `bson:"token_version"`
 }

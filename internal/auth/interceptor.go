@@ -26,8 +26,11 @@ var errInvalidToken = errors.New("invalid token")
 
 // ValidateBearer verifies an "Authorization: Bearer <jwt>" header value and
 // returns the subject username. Shared by the Connect interceptor and the
-// plain-HTTP middleware so both enforce identical rules.
-func ValidateBearer(jwtSecret, authHeader string) (string, error) {
+// plain-HTTP middleware so both enforce identical rules. The token's version
+// claim must match the user's current TokenVersion, so a password change
+// invalidates every previously issued token; tokens minted before versioning
+// existed carry an implicit version 0.
+func ValidateBearer(ctx context.Context, jwtSecret, authHeader string, store UserStore) (string, error) {
 	if authHeader == "" {
 		return "", errInvalidToken
 	}
@@ -53,17 +56,27 @@ func ValidateBearer(jwtSecret, authHeader string) (string, error) {
 	}
 
 	username, _ := claims["sub"].(string)
+
+	user, err := store.GetByUsername(ctx, username)
+	if err != nil {
+		return "", errInvalidToken
+	}
+	ver, _ := claims["ver"].(float64) // JSON numbers decode as float64; absent → 0
+	if int64(ver) != user.TokenVersion {
+		return "", errInvalidToken
+	}
+
 	return username, nil
 }
 
-func NewAuthInterceptor(jwtSecret string) connect.UnaryInterceptorFunc {
+func NewAuthInterceptor(jwtSecret string, store UserStore) connect.UnaryInterceptorFunc {
 	return connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
 		return connect.UnaryFunc(func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
 			if publicProcedures[req.Spec().Procedure] {
 				return next(ctx, req)
 			}
 
-			username, err := ValidateBearer(jwtSecret, req.Header().Get("Authorization"))
+			username, err := ValidateBearer(ctx, jwtSecret, req.Header().Get("Authorization"), store)
 			if err != nil {
 				return nil, connect.NewError(connect.CodeUnauthenticated, err)
 			}
@@ -76,9 +89,9 @@ func NewAuthInterceptor(jwtSecret string) connect.UnaryInterceptorFunc {
 
 // GinMiddleware protects plain HTTP routes (media upload, token management)
 // with the same JWT the Connect services use.
-func GinMiddleware(jwtSecret string) gin.HandlerFunc {
+func GinMiddleware(jwtSecret string, store UserStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		username, err := ValidateBearer(jwtSecret, c.GetHeader("Authorization"))
+		username, err := ValidateBearer(c.Request.Context(), jwtSecret, c.GetHeader("Authorization"), store)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 			return

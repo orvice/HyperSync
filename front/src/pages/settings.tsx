@@ -4,20 +4,20 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { authClient } from "@/lib/connect";
+import { useAuth } from "@/lib/auth";
 
 export function SettingsPage() {
   const navigate = useNavigate();
+  const { logout } = useAuth();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    setSuccess("");
 
     if (!currentPassword || !newPassword) {
       setError("All fields are required");
@@ -38,10 +38,10 @@ export function SettingsPage() {
         currentPassword,
         newPassword,
       });
-      setSuccess("Password changed successfully");
-      setCurrentPassword("");
-      setNewPassword("");
-      setConfirmPassword("");
+      // The change invalidates every outstanding token, including this
+      // session's — sign out and re-authenticate with the new password.
+      logout();
+      navigate("/login", { replace: true });
     } catch {
       setError("Failed to change password. Check your current password.");
     } finally {
@@ -102,8 +102,7 @@ export function SettingsPage() {
             </div>
 
             {error && <p className="text-sm text-destructive">{error}</p>}
-            {success && <p className="text-sm text-green-600">{success}</p>}
-
+  
             <Button type="submit" disabled={loading}>
               {loading ? "Changing..." : "Change Password"}
             </Button>

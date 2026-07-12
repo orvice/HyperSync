@@ -29,14 +29,18 @@ func Router(r *gin.Engine) {
 
 	jwtSecret := requireJWTSecret()
 
+	// The user store backs both credential checks and per-request token
+	// version validation (invalidating tokens issued before a password change).
+	userStore := auth.NewMongoUserStore(dao.NewMongoClient(), "hypersync")
+
 	// ConnectRPC services
-	mountConnectRPC(r, jwtSecret)
+	mountConnectRPC(r, jwtSecret, userStore)
 
 	// API routes
 	api := r.Group("/api")
 	{
 		// Token management routes mutate platform state — same JWT as the RPCs.
-		tokenRoutes := api.Group("/token", auth.GinMiddleware(jwtSecret))
+		tokenRoutes := api.Group("/token", auth.GinMiddleware(jwtSecret, userStore))
 		{
 			schedulerService, err := wire.NewSchedulerService()
 			if err != nil {
@@ -66,10 +70,9 @@ func requireJWTSecret() string {
 	return authConf.JWTSecret
 }
 
-func mountConnectRPC(r *gin.Engine, jwtSecret string) {
+func mountConnectRPC(r *gin.Engine, jwtSecret string, userStore *auth.MongoUserStore) {
 	mongoClient := dao.NewMongoClient()
-	userStore := auth.NewMongoUserStore(mongoClient, "hypersync")
-	interceptor := auth.NewAuthInterceptor(jwtSecret)
+	interceptor := auth.NewAuthInterceptor(jwtSecret, userStore)
 
 	authService := service.NewAuthService(userStore, jwtSecret)
 	authPath, authHandler := v1connect.NewAuthServiceHandler(authService, connect.WithInterceptors(interceptor))
@@ -114,5 +117,5 @@ func mountConnectRPC(r *gin.Engine, jwtSecret string) {
 	mediaService := service.NewMediaService(mediaStore, objectStorage, cdnDomain)
 	mediaPath, mediaHandler := v1connect.NewMediaServiceHandler(mediaService, connect.WithInterceptors(interceptor))
 	r.Any(mediaPath+"*path", gin.WrapH(mediaHandler))
-	r.POST("/api/media/upload", auth.GinMiddleware(jwtSecret), gin.WrapF(mediaService.HandleUpload))
+	r.POST("/api/media/upload", auth.GinMiddleware(jwtSecret, userStore), gin.WrapF(mediaService.HandleUpload))
 }
