@@ -559,13 +559,19 @@ func TestPublishWorker_ShutdownMidRun_FinishesInFlightPostOnly(t *testing.T) {
 	require.Len(t, mastodon.postCalls, 1, "only the in-flight post may sync after shutdown starts")
 	assert.NoError(t, inFlightCtxErr, "in-flight post must keep a live context during shutdown")
 
-	first, err := store.GetByID(context.Background(), ids[0])
-	require.NoError(t, err)
-	assert.True(t, first.CrossPostStatus["mastodon"].Success, "in-flight post outcome must be persisted")
-
-	second, err := store.GetByID(context.Background(), ids[1])
-	require.NoError(t, err)
-	assert.False(t, second.CrossPostStatus["mastodon"].Success, "no new post sync may begin after shutdown starts")
+	// ListPendingSync iterates a map, so which post is processed first is not
+	// deterministic. Assert on the aggregate the behavior guarantees: exactly
+	// one of the two synced (the in-flight one, persisted), the other did not
+	// (no new sync began after shutdown) — regardless of ordering.
+	synced := 0
+	for _, id := range ids {
+		p, err := store.GetByID(context.Background(), id)
+		require.NoError(t, err)
+		if p.CrossPostStatus["mastodon"].Success {
+			synced++
+		}
+	}
+	assert.Equal(t, 1, synced, "exactly one post syncs: the in-flight one persists, no new sync begins")
 }
 
 func TestPublishWorker_ShutdownBeforeRun_StartsNoDeleteRetries(t *testing.T) {
