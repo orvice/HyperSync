@@ -102,7 +102,7 @@ export function SettingsPage() {
             </div>
 
             {error && <p className="text-sm text-destructive">{error}</p>}
-  
+
             <Button type="submit" disabled={loading}>
               {loading ? "Changing..." : "Change Password"}
             </Button>

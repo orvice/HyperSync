@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -20,6 +21,10 @@ import (
 	"go.orx.me/apps/hyper-sync/internal/service"
 )
 
+// testJWTSecret is the single secret shared by every helper and hand-minted
+// token in this file, so a change here can't silently desync the two.
+const testJWTSecret = "test-secret-key"
+
 func setupAuthTest(t *testing.T, users ...*auth.User) (v1connect.AuthServiceClient, func()) {
 	t.Helper()
 
@@ -29,8 +34,7 @@ func setupAuthTest(t *testing.T, users ...*auth.User) (v1connect.AuthServiceClie
 		require.NoError(t, err)
 	}
 
-	jwtSecret := "test-secret-key"
-	svc := service.NewAuthService(store, jwtSecret)
+	svc := service.NewAuthService(store, testJWTSecret)
 
 	mux := http.NewServeMux()
 	path, handler := v1connect.NewAuthServiceHandler(svc)
@@ -108,9 +112,16 @@ func setupProtectedAuthTest(t *testing.T, users ...*auth.User) (v1connect.AuthSe
 		require.NoError(t, err)
 	}
 
-	jwtSecret := "test-secret-key"
-	svc := service.NewAuthService(store, jwtSecret)
-	interceptor := auth.NewAuthInterceptor(jwtSecret, store)
+	return newProtectedClient(t, store)
+}
+
+// newProtectedClient mounts the AuthService behind the real interceptor for the
+// given store, so tests can inject a store that simulates a database outage.
+func newProtectedClient(t *testing.T, store auth.UserStore) (v1connect.AuthServiceClient, func()) {
+	t.Helper()
+
+	svc := service.NewAuthService(store, testJWTSecret)
+	interceptor := auth.NewAuthInterceptor(testJWTSecret, store)
 
 	mux := http.NewServeMux()
 	path, handler := v1connect.NewAuthServiceHandler(svc, connect.WithInterceptors(interceptor))
@@ -121,6 +132,16 @@ func setupProtectedAuthTest(t *testing.T, users ...*auth.User) (v1connect.AuthSe
 
 	return client, server.Close
 }
+
+// outageStore fails every read to simulate a database outage during token
+// validation.
+type outageStore struct{}
+
+func (outageStore) GetByUsername(context.Context, string) (*auth.User, error) {
+	return nil, errors.New("mongo: connection refused")
+}
+func (outageStore) Create(context.Context, *auth.User) error             { return nil }
+func (outageStore) UpdatePassword(context.Context, string, string) error { return nil }
 
 func TestProtectedEndpoint_NoToken_ReturnsUnauthenticated(t *testing.T) {
 	user := &auth.User{
@@ -308,7 +329,7 @@ func TestLegacyTokenWithoutVersionClaim_StillValidUntilPasswordChange(t *testing
 		"sub": "admin",
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
-	legacyToken, err := legacy.SignedString([]byte("test-secret-key"))
+	legacyToken, err := legacy.SignedString([]byte(testJWTSecret))
 	require.NoError(t, err)
 
 	req := connect.NewRequest(&v1.ChangePasswordRequest{
@@ -328,4 +349,30 @@ func TestLegacyTokenWithoutVersionClaim_StillValidUntilPasswordChange(t *testing
 	_, err = client.ChangePassword(context.Background(), req2)
 	require.Error(t, err)
 	assert.Equal(t, connect.CodeUnauthenticated, connect.CodeOf(err))
+}
+
+func TestProtectedEndpoint_StoreOutage_ReturnsUnavailableNotUnauthenticated(t *testing.T) {
+	// A structurally valid token whose validation can't complete because the
+	// store is down must surface as Unavailable, not Unauthenticated — else a
+	// transient outage looks like revocation and logs every client out.
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub":                  "admin",
+		"exp":                  time.Now().Add(time.Hour).Unix(),
+		auth.TokenVersionClaim: int64(0),
+	})
+	token, err := tok.SignedString([]byte(testJWTSecret))
+	require.NoError(t, err)
+
+	client, cleanup := newProtectedClient(t, outageStore{})
+	defer cleanup()
+
+	req := connect.NewRequest(&v1.ChangePasswordRequest{
+		CurrentPassword: "whatever",
+		NewPassword:     "whatever-new-123",
+	})
+	req.Header().Set("Authorization", "Bearer "+token)
+	_, err = client.ChangePassword(context.Background(), req)
+
+	require.Error(t, err)
+	assert.Equal(t, connect.CodeUnavailable, connect.CodeOf(err))
 }

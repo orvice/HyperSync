@@ -22,7 +22,17 @@ var publicProcedures = map[string]bool{
 	"/api.v1.AuthService/Login": true,
 }
 
+// TokenVersionClaim names the JWT claim carrying the user's TokenVersion at
+// mint time; the signing site (AuthService.Login) and this validator share it.
+const TokenVersionClaim = "ver"
+
 var errInvalidToken = errors.New("invalid token")
+
+// errStoreUnavailable signals that token validation could not complete because
+// the user store failed (e.g. a database outage), as opposed to the token being
+// invalid. Callers surface this as a 5xx, not a 401, so a transient blip does
+// not masquerade as revocation and force every client to re-login.
+var errStoreUnavailable = errors.New("user store unavailable")
 
 // ValidateBearer verifies an "Authorization: Bearer <jwt>" header value and
 // returns the subject username. Shared by the Connect interceptor and the
@@ -59,9 +69,14 @@ func ValidateBearer(ctx context.Context, jwtSecret, authHeader string, store Use
 
 	user, err := store.GetByUsername(ctx, username)
 	if err != nil {
-		return "", errInvalidToken
+		// A missing user is a genuine auth failure; any other store error is
+		// an outage we must not report as revocation.
+		if errors.Is(err, ErrUserNotFound) {
+			return "", errInvalidToken
+		}
+		return "", errStoreUnavailable
 	}
-	ver, _ := claims["ver"].(float64) // JSON numbers decode as float64; absent → 0
+	ver, _ := claims[TokenVersionClaim].(float64) // JSON numbers decode as float64; absent → 0
 	if int64(ver) != user.TokenVersion {
 		return "", errInvalidToken
 	}
@@ -78,6 +93,9 @@ func NewAuthInterceptor(jwtSecret string, store UserStore) connect.UnaryIntercep
 
 			username, err := ValidateBearer(ctx, jwtSecret, req.Header().Get("Authorization"), store)
 			if err != nil {
+				if errors.Is(err, errStoreUnavailable) {
+					return nil, connect.NewError(connect.CodeUnavailable, err)
+				}
 				return nil, connect.NewError(connect.CodeUnauthenticated, err)
 			}
 
@@ -93,6 +111,10 @@ func GinMiddleware(jwtSecret string, store UserStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		username, err := ValidateBearer(c.Request.Context(), jwtSecret, c.GetHeader("Authorization"), store)
 		if err != nil {
+			if errors.Is(err, errStoreUnavailable) {
+				c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "service unavailable"})
+				return
+			}
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 			return
 		}
