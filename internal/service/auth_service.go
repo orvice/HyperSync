@@ -42,8 +42,9 @@ func (s *AuthService) Login(ctx context.Context, req *connect.Request[v1.LoginRe
 
 	expiresAt := time.Now().Add(24 * time.Hour)
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub": user.Username,
-		"exp": expiresAt.Unix(),
+		"sub":                  user.Username,
+		"exp":                  expiresAt.Unix(),
+		auth.TokenVersionClaim: user.TokenVersion,
 	})
 
 	tokenString, err := token.SignedString([]byte(s.jwtSecret))

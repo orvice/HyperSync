@@ -12,11 +12,16 @@ type User struct {
 	ID           string
 	Username     string
 	PasswordHash string
+	// TokenVersion is embedded in JWT claims at login; a password change
+	// bumps it, invalidating every previously issued token.
+	TokenVersion int64
 }
 
 type UserStore interface {
 	GetByUsername(ctx context.Context, username string) (*User, error)
 	Create(ctx context.Context, user *User) error
+	// UpdatePassword sets the new hash and bumps TokenVersion in the same
+	// operation so outstanding tokens are invalidated with the change.
 	UpdatePassword(ctx context.Context, username string, newHash string) error
 }
 
@@ -56,5 +61,6 @@ func (s *MemoryUserStore) UpdatePassword(ctx context.Context, username string, n
 		return ErrUserNotFound
 	}
 	u.PasswordHash = newHash
+	u.TokenVersion++
 	return nil
 }
