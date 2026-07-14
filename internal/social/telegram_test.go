@@ -12,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.orx.me/apps/hyper-sync/internal/media"
 )
 
 // fakeTelegramServer emulates the subset of the Telegram Bot API that
@@ -64,6 +66,10 @@ func (f *fakeTelegramServer) handle(w http.ResponseWriter, r *http.Request) {
 			"ok":     true,
 			"result": map[string]any{"file_id": fileID, "file_path": path},
 		})
+
+	case strings.Contains(r.URL.Path, "/file/bot"):
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = w.Write([]byte("fake-file-bytes"))
 
 	default:
 		http.NotFound(w, r)
@@ -136,7 +142,7 @@ func TestTelegram_ListPosts_SingleTextMessage(t *testing.T) {
 		},
 	})
 
-	client, err := NewTelegramClient("test-token", "-1001234567890", "my-telegram", server.URL, nil)
+	client, err := NewTelegramClient("test-token", "-1001234567890", "my-telegram", server.URL, nil, nil, "")
 	require.NoError(t, err)
 	defer client.Close()
 
@@ -174,7 +180,8 @@ func TestTelegram_ListPosts_PhotoWithCaption(t *testing.T) {
 		},
 	})
 
-	client, err := NewTelegramClient("test-token", "-1001234567890", "my-telegram", server.URL, nil)
+	storage := media.NewMemoryObjectStorage()
+	client, err := NewTelegramClient("test-token", "-1001234567890", "my-telegram", server.URL, nil, storage, "https://cdn.example.com")
 	require.NoError(t, err)
 	defer client.Close()
 
@@ -187,8 +194,14 @@ func TestTelegram_ListPosts_PhotoWithCaption(t *testing.T) {
 	assert.Equal(t, VisibilityLevelPublic, post.Visibility)
 	require.Len(t, post.Media, 1)
 
-	expectedURL := server.URL + "/file/bottest-token/photos/file_123.jpg"
-	assert.Equal(t, expectedURL, post.Media[0].GetURL())
+	url := post.Media[0].GetURL()
+	assert.True(t, strings.HasPrefix(url, "https://cdn.example.com/"))
+	assert.Contains(t, url, "file_123.jpg")
+	assert.NotContains(t, url, "api.telegram.org")
+	assert.NotContains(t, url, server.URL)
+
+	key := strings.TrimPrefix(url, "https://cdn.example.com/")
+	assert.True(t, storage.Has(key), "uploaded file should be present in object storage")
 }
 
 func TestTelegram_ListPosts_SkippedMessageTypes(t *testing.T) {
@@ -232,7 +245,7 @@ func TestTelegram_ListPosts_SkippedMessageTypes(t *testing.T) {
 		},
 	})
 
-	client, err := NewTelegramClient("test-token", "-100", "tg", server.URL, nil)
+	client, err := NewTelegramClient("test-token", "-100", "tg", server.URL, nil, nil, "")
 	require.NoError(t, err)
 	defer client.Close()
 
@@ -288,7 +301,7 @@ func TestTelegram_ListPosts_OffsetAdvancement(t *testing.T) {
 	})
 
 	cursor := newMemoryCursor()
-	client, err := NewTelegramClient("test-token", "-100", "tg", server.URL, cursor)
+	client, err := NewTelegramClient("test-token", "-100", "tg", server.URL, cursor, nil, "")
 	require.NoError(t, err)
 	defer client.Close()
 
@@ -311,7 +324,7 @@ func TestTelegram_ListPosts_EmptyBatch(t *testing.T) {
 	cursor := newMemoryCursor()
 	cursor.offsets["tg"] = 50 // pre-existing offset
 
-	client, err := NewTelegramClient("test-token", "-100", "tg", server.URL, cursor)
+	client, err := NewTelegramClient("test-token", "-100", "tg", server.URL, cursor, nil, "")
 	require.NoError(t, err)
 	defer client.Close()
 
@@ -347,7 +360,7 @@ func TestTelegram_ListPosts_EntityStripping(t *testing.T) {
 		},
 	})
 
-	client, err := NewTelegramClient("test-token", "-100", "tg", server.URL, nil)
+	client, err := NewTelegramClient("test-token", "-100", "tg", server.URL, nil, nil, "")
 	require.NoError(t, err)
 	defer client.Close()
 
@@ -390,7 +403,8 @@ func TestTelegram_ListPosts_MediaGroupMerge(t *testing.T) {
 		},
 	})
 
-	client, err := NewTelegramClient("test-token", "-100", "tg", server.URL, nil)
+	storage := media.NewMemoryObjectStorage()
+	client, err := NewTelegramClient("test-token", "-100", "tg", server.URL, nil, storage, "https://cdn.example.com")
 	require.NoError(t, err)
 	defer client.Close()
 
@@ -400,13 +414,123 @@ func TestTelegram_ListPosts_MediaGroupMerge(t *testing.T) {
 	post := posts[0]
 	assert.Equal(t, "Album title", post.Content)
 	require.Len(t, post.Media, 2)
-	assert.Contains(t, post.Media[0].GetURL(), "p1.jpg")
-	assert.Contains(t, post.Media[1].GetURL(), "p2.jpg")
+	assert.Contains(t, post.Media[0].GetURL(), "p1")
+	assert.Contains(t, post.Media[1].GetURL(), "p2")
+	assert.NotContains(t, post.Media[0].GetURL(), "api.telegram.org")
+	assert.True(t, strings.HasPrefix(post.Media[0].GetURL(), "https://cdn.example.com/"))
+}
+
+func TestTelegram_ListPosts_Video(t *testing.T) {
+	msgDate := time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)
+	server := newFakeTelegramServer(t)
+	server.setFile("video_id", "videos/clip.mp4")
+	server.pushBatch([]map[string]any{
+		{
+			"update_id": 600,
+			"channel_post": map[string]any{
+				"message_id": 80,
+				"date":       msgDate.Unix(),
+				"caption":    "Watch this",
+				"chat":       map[string]any{"id": -100, "type": "channel"},
+				"video":      map[string]any{"file_id": "video_id", "file_unique_id": "v1", "width": 1280, "height": 720, "duration": 12},
+			},
+		},
+	})
+
+	storage := media.NewMemoryObjectStorage()
+	client, err := NewTelegramClient("test-token", "-100", "tg", server.URL, nil, storage, "https://cdn.example.com")
+	require.NoError(t, err)
+	defer client.Close()
+
+	posts := waitForPosts(t, client, 1, 3*time.Second)
+	require.Len(t, posts, 1)
+
+	post := posts[0]
+	assert.Equal(t, "Watch this", post.Content)
+	require.Len(t, post.Media, 1)
+
+	url := post.Media[0].GetURL()
+	assert.True(t, strings.HasPrefix(url, "https://cdn.example.com/"))
+	assert.Contains(t, url, "clip.mp4")
+	assert.NotContains(t, url, "api.telegram.org")
+}
+
+func TestTelegram_ListPosts_PhotoWithoutCaption(t *testing.T) {
+	msgDate := time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)
+	server := newFakeTelegramServer(t)
+	server.setFile("photo_id", "photos/no_caption.jpg")
+	server.pushBatch([]map[string]any{
+		{
+			"update_id": 700,
+			"channel_post": map[string]any{
+				"message_id": 90,
+				"date":       msgDate.Unix(),
+				"chat":       map[string]any{"id": -100, "type": "channel"},
+				"photo": []map[string]any{
+					{"file_id": "photo_id", "file_unique_id": "p1", "width": 800, "height": 600},
+				},
+			},
+		},
+	})
+
+	storage := media.NewMemoryObjectStorage()
+	client, err := NewTelegramClient("test-token", "-100", "tg", server.URL, nil, storage, "https://cdn.example.com")
+	require.NoError(t, err)
+	defer client.Close()
+
+	posts := waitForPosts(t, client, 1, 3*time.Second)
+	require.Len(t, posts, 1)
+
+	post := posts[0]
+	assert.Equal(t, "", post.Content)
+	require.Len(t, post.Media, 1)
+	assert.Contains(t, post.Media[0].GetURL(), "no_caption.jpg")
+}
+
+func TestTelegram_ListPosts_DownloadFailureSkipsMessage(t *testing.T) {
+	msgDate := time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)
+	server := newFakeTelegramServer(t)
+	// photo_id is never registered via setFile, so getFile returns an empty
+	// file_path and the download step fails.
+	server.pushBatch([]map[string]any{
+		{
+			"update_id": 800,
+			"channel_post": map[string]any{
+				"message_id": 100,
+				"date":       msgDate.Unix(),
+				"caption":    "Broken photo",
+				"chat":       map[string]any{"id": -100, "type": "channel"},
+				"photo": []map[string]any{
+					{"file_id": "missing_id", "file_unique_id": "m1", "width": 800, "height": 600},
+				},
+			},
+		},
+		{
+			"update_id": 801,
+			"channel_post": map[string]any{
+				"message_id": 101,
+				"date":       msgDate.Unix(),
+				"text":       "Still works",
+				"chat":       map[string]any{"id": -100, "type": "channel"},
+			},
+		},
+	})
+
+	client, err := NewTelegramClient("test-token", "-100", "tg", server.URL, nil, nil, "https://cdn.example.com")
+	require.NoError(t, err)
+	defer client.Close()
+
+	posts := waitForPosts(t, client, 2, 3*time.Second)
+	require.Len(t, posts, 2)
+
+	assert.Equal(t, "Broken photo", posts[0].Content)
+	assert.Empty(t, posts[0].Media, "failed download should not block the post, just skip the media")
+	assert.Equal(t, "Still works", posts[1].Content)
 }
 
 func TestTelegram_Post_NotImplemented(t *testing.T) {
 	server := newFakeTelegramServer(t)
-	client, err := NewTelegramClient("test-token", "chan", "tg", server.URL, nil)
+	client, err := NewTelegramClient("test-token", "chan", "tg", server.URL, nil, nil, "")
 	require.NoError(t, err)
 	defer client.Close()
 
@@ -428,7 +552,7 @@ func TestInitSocialPlatforms_Telegram(t *testing.T) {
 		},
 	}
 
-	platforms, err := InitSocialPlatforms(configs, nil, nil)
+	platforms, err := InitSocialPlatforms(configs, nil, nil, nil, "")
 	require.NoError(t, err)
 	require.Len(t, platforms, 1)
 
@@ -451,7 +575,7 @@ func TestInitSocialPlatforms_Telegram_MissingConfig(t *testing.T) {
 		},
 	}
 
-	_, err := InitSocialPlatforms(configs, nil, nil)
+	_, err := InitSocialPlatforms(configs, nil, nil, nil, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "missing Telegram config")
 }
@@ -468,7 +592,7 @@ func TestInitSocialPlatforms_Telegram_MissingCredentials(t *testing.T) {
 		},
 	}
 
-	_, err := InitSocialPlatforms(configs, nil, nil)
+	_, err := InitSocialPlatforms(configs, nil, nil, nil, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "missing Telegram credentials")
 }

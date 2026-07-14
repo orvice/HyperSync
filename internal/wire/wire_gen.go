@@ -19,7 +19,11 @@ func NewSyncService(mainSocial string, socials []string) (*service.SyncService, 
 	socialConfigDao := dao.NewSocialConfigDao(client)
 	threadsConfigAdapter := dao.NewThreadsConfigAdapter(socialConfigDao)
 	syncCursorDao := dao.NewSyncCursorDao(client)
-	socialService, err := service.NewSocialService(threadsConfigAdapter, syncCursorDao)
+	objectStorage, err := dao.NewObjectStorage()
+	if err != nil {
+		return nil, err
+	}
+	socialService, err := service.NewSocialService(threadsConfigAdapter, syncCursorDao, objectStorage)
 	if err != nil {
 		return nil, err
 	}
@@ -37,7 +41,11 @@ func NewSchedulerService() (*service.SchedulerService, error) {
 	socialConfigDao := dao.NewSocialConfigDao(client)
 	threadsConfigAdapter := dao.NewThreadsConfigAdapter(socialConfigDao)
 	syncCursorDao := dao.NewSyncCursorDao(client)
-	socialService, err := service.NewSocialService(threadsConfigAdapter, syncCursorDao)
+	objectStorage, err := dao.NewObjectStorage()
+	if err != nil {
+		return nil, err
+	}
+	socialService, err := service.NewSocialService(threadsConfigAdapter, syncCursorDao, objectStorage)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +60,11 @@ func NewSocialServiceOnly() (*service.SocialService, error) {
 	socialConfigDao := dao.NewSocialConfigDao(client)
 	threadsConfigAdapter := dao.NewThreadsConfigAdapter(socialConfigDao)
 	syncCursorDao := dao.NewSyncCursorDao(client)
-	socialService, err := service.NewSocialService(threadsConfigAdapter, syncCursorDao)
+	objectStorage, err := dao.NewObjectStorage()
+	if err != nil {
+		return nil, err
+	}
+	socialService, err := service.NewSocialService(threadsConfigAdapter, syncCursorDao, objectStorage)
 	if err != nil {
 		return nil, err
 	}

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/mattn/go-mastodon"
+
+	"go.orx.me/apps/hyper-sync/internal/media"
 )
 
 // Platform represents different social media platforms
@@ -535,7 +537,7 @@ func CrossPost(ctx context.Context, post *Post, platforms []*SocialPlatform) (ma
 }
 
 // InitSocialPlatforms initializes social clients from configuration
-func InitSocialPlatforms(configs map[string]*PlatformConfig, tokenManager TokenManager, cursorDao SyncCursorDao) ([]*SocialPlatform, error) {
+func InitSocialPlatforms(configs map[string]*PlatformConfig, tokenManager TokenManager, cursorDao SyncCursorDao, objectStorage media.ObjectStorage, cdnDomain string) ([]*SocialPlatform, error) {
 	var platforms []*SocialPlatform
 
 	for name, config := range configs {
@@ -605,7 +607,7 @@ func InitSocialPlatforms(configs map[string]*PlatformConfig, tokenManager TokenM
 			if config.Telegram.BotToken == "" || config.Telegram.ChannelID == "" {
 				return nil, fmt.Errorf("missing Telegram credentials for %s", name)
 			}
-			client, err = NewTelegramClient(config.Telegram.BotToken, config.Telegram.ChannelID, config.Name, "", cursorDao)
+			client, err = NewTelegramClient(config.Telegram.BotToken, config.Telegram.ChannelID, config.Name, "", cursorDao, objectStorage, cdnDomain)
 			if err != nil {
 				return nil, fmt.Errorf("failed to initialize Telegram client for %s: %w", name, err)
 			}

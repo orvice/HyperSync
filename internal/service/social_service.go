@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"go.orx.me/apps/hyper-sync/internal/conf"
+	"go.orx.me/apps/hyper-sync/internal/media"
 	"go.orx.me/apps/hyper-sync/internal/social"
 )
 
@@ -14,10 +15,14 @@ type SocialService struct {
 }
 
 // NewSocialService creates a new social service
-func NewSocialService(tokenManager social.TokenManager, cursorDao social.SyncCursorDao) (*SocialService, error) {
+func NewSocialService(tokenManager social.TokenManager, cursorDao social.SyncCursorDao, objectStorage media.ObjectStorage) (*SocialService, error) {
 	config := conf.Conf.Socials
+	cdnDomain := ""
+	if conf.Conf.Storage != nil && conf.Conf.Storage.S3 != nil {
+		cdnDomain = conf.Conf.Storage.S3.CDNDomain
+	}
 	// Initialize platforms with the configuration
-	platforms, err := social.InitSocialPlatforms(config, tokenManager, cursorDao)
+	platforms, err := social.InitSocialPlatforms(config, tokenManager, cursorDao, objectStorage, cdnDomain)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize social platforms: %w", err)
 	}
