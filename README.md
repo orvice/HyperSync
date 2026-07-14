@@ -1,6 +1,6 @@
 # HyperSync
 
-A personal content publishing hub. Author posts in HyperSync (React frontend + ConnectRPC API) and sync them to social platforms — Mastodon, Bluesky, Threads, and Memos — with media upload to S3-compatible storage. Also includes the original Memos → social networks sync pipeline.
+A personal content publishing hub. Author posts in HyperSync (React frontend + ConnectRPC API) and sync them to social platforms — Mastodon, Bluesky, Threads, and Memos — with media upload to S3-compatible storage. Also ingests content from Telegram channels (including multi-photo/video albums) and includes the original Memos → social networks sync pipeline.
 
 ## Features
 
@@ -8,6 +8,7 @@ A personal content publishing hub. Author posts in HyperSync (React frontend + C
 - **Media upload** — S3-compatible object storage with CDN URLs, attached to posts on sync
 - **Web frontend** — React + shadcn/ui under `front/`, shipped as a separate Docker image
 - **JWT auth** — single-user login; `auth.jwt_secret` is required or the server refuses to start
+- **Telegram ingestion** — pull content from a Telegram channel via Bot API; multi-photo/video albums are merged into a single Post
 - **Legacy sync** — the original Memos → Mastodon/Bluesky/Threads pull-based sync still runs alongside
 
 ## Configuration
@@ -75,6 +76,18 @@ socials:
       access_token: "your_access_token"
       user_id: 1234567890
 
+  # Telegram channel ingestion (content source only)
+  telegram:
+    name: telegram
+    type: telegram
+    enabled: true
+    sync_to:
+      - mastodon
+      - bluesky
+    telegram:
+      bot_token: "123456:ABC-DEF..."
+      channel_id: "-1001234567890"
+
 # Data storage configuration
 store:
   mongo:
@@ -116,6 +129,10 @@ sync:
   - `access_token`: Initial access token (written to DB on first startup, then DB takes precedence)
   - `user_id`: Your Threads user ID
 
+- **telegram**: Telegram channel ingestion (content source only, not a sync target)
+  - `bot_token`: Bot API token from [@BotFather](https://t.me/BotFather)
+  - `channel_id`: Channel ID (numeric, usually starts with `-100`)
+
 #### Storage Configuration
 
 - **mongo**: MongoDB database configuration
@@ -145,6 +162,11 @@ sync:
 1. Create a Meta app at [Meta for Developers](https://developers.facebook.com/)
 2. Configure Threads API permissions
 3. Obtain an access token via OAuth flow
+
+#### Telegram
+1. Create a bot via [@BotFather](https://t.me/BotFather) and copy the bot token
+2. Add the bot as an admin to your channel
+3. Get the channel ID (numeric form, e.g. `-1001234567890`)
 
 ## Running
 
