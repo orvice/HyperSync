@@ -420,6 +420,89 @@ func TestTelegram_ListPosts_MediaGroupMerge(t *testing.T) {
 	assert.True(t, strings.HasPrefix(post.Media[0].GetURL(), "https://cdn.example.com/"))
 }
 
+func TestTelegram_ListPosts_InterleavedMediaGroups(t *testing.T) {
+	server := newFakeTelegramServer(t)
+	server.setFile("a1", "photos/a1.jpg")
+	server.setFile("a2", "photos/a2.jpg")
+	server.setFile("b1", "photos/b1.jpg")
+
+	// Interleaved: groupA-1, standalone, groupB-1, groupA-2
+	server.pushBatch([]map[string]any{
+		{
+			"update_id": 900,
+			"channel_post": map[string]any{
+				"message_id":     90,
+				"date":           1000,
+				"caption":        "Album A",
+				"media_group_id": "groupA",
+				"chat":           map[string]any{"id": -100, "type": "channel"},
+				"photo":          []map[string]any{{"file_id": "a1", "file_unique_id": "u1", "width": 800, "height": 600}},
+			},
+		},
+		{
+			"update_id": 901,
+			"channel_post": map[string]any{
+				"message_id": 91,
+				"date":       1001,
+				"text":       "Standalone message",
+				"chat":       map[string]any{"id": -100, "type": "channel"},
+			},
+		},
+		{
+			"update_id": 902,
+			"channel_post": map[string]any{
+				"message_id":     92,
+				"date":           1002,
+				"media_group_id": "groupB",
+				"chat":           map[string]any{"id": -100, "type": "channel"},
+				"photo":          []map[string]any{{"file_id": "b1", "file_unique_id": "u3", "width": 800, "height": 600}},
+			},
+		},
+		{
+			"update_id": 903,
+			"channel_post": map[string]any{
+				"message_id":     93,
+				"date":           1003,
+				"media_group_id": "groupA",
+				"chat":           map[string]any{"id": -100, "type": "channel"},
+				"photo":          []map[string]any{{"file_id": "a2", "file_unique_id": "u2", "width": 800, "height": 600}},
+			},
+		},
+	})
+
+	storage := media.NewMemoryObjectStorage()
+	client, err := NewTelegramClient("test-token", "-100", "tg", server.URL, nil, storage, "https://cdn.example.com")
+	require.NoError(t, err)
+	defer client.Close()
+
+	posts := waitForPosts(t, client, 3, 5*time.Second)
+	require.Len(t, posts, 3, "should produce 3 posts: groupA merged, standalone, groupB")
+
+	var groupA, standalone, groupB *Post
+	for _, p := range posts {
+		switch {
+		case p.Content == "Standalone message":
+			standalone = p
+		case p.Content == "Album A":
+			groupA = p
+		case p.Content == "" && len(p.Media) == 1:
+			groupB = p
+		}
+	}
+
+	require.NotNil(t, groupA, "should have a merged groupA post")
+	assert.Len(t, groupA.Media, 2, "groupA should have 2 media items")
+	assert.Contains(t, groupA.Media[0].GetURL(), "a1")
+	assert.Contains(t, groupA.Media[1].GetURL(), "a2")
+
+	require.NotNil(t, standalone, "should have the standalone post")
+	assert.Empty(t, standalone.Media)
+
+	require.NotNil(t, groupB, "should have a groupB post")
+	assert.Len(t, groupB.Media, 1)
+	assert.Contains(t, groupB.Media[0].GetURL(), "b1")
+}
+
 func TestTelegram_ListPosts_Video(t *testing.T) {
 	msgDate := time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)
 	server := newFakeTelegramServer(t)

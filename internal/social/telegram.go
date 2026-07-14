@@ -33,6 +33,13 @@ type SyncCursorDao interface {
 // to know no more parts are coming.
 const mediaGroupFlushDelay = 700 * time.Millisecond
 
+// pendingMediaGroup tracks an in-progress media group being assembled from
+// multiple Telegram updates sharing the same media_group_id.
+type pendingMediaGroup struct {
+	post  *Post
+	timer *time.Timer
+}
+
 // TelegramClient implements SocialClient for Telegram channel ingestion.
 //
 // It runs a go-telegram/bot long-polling loop in the background for the
@@ -48,11 +55,9 @@ type TelegramClient struct {
 
 	cancel context.CancelFunc
 
-	mu             sync.Mutex
-	buffer         []*Post
-	pendingGroupID string
-	pendingGroup   *Post
-	flushTimer     *time.Timer
+	mu            sync.Mutex
+	buffer        []*Post
+	pendingGroups map[string]*pendingMediaGroup
 }
 
 func NewTelegramClient(botToken, channelID, name, apiBase string, cursor SyncCursorDao, objectStorage media.ObjectStorage, cdnDomain string) (*TelegramClient, error) {
@@ -61,6 +66,7 @@ func NewTelegramClient(botToken, channelID, name, apiBase string, cursor SyncCur
 		cursor:        cursor,
 		objectStorage: objectStorage,
 		cdnDomain:     cdnDomain,
+		pendingGroups: make(map[string]*pendingMediaGroup),
 	}
 
 	var offset int64
@@ -147,56 +153,57 @@ func (t *TelegramClient) ingest(ctx context.Context, msg *models.Message) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	if msg.MediaGroupID != "" && t.pendingGroup != nil && t.pendingGroupID == msg.MediaGroupID {
-		t.mergeIntoPendingGroupLocked(ctx, msg)
+	if msg.MediaGroupID != "" {
+		if pg, ok := t.pendingGroups[msg.MediaGroupID]; ok {
+			t.mergeIntoPendingLocked(ctx, pg, msg)
+			return
+		}
+
+		post := t.convert(ctx, msg)
+		if post == nil {
+			return
+		}
+		pg := &pendingMediaGroup{post: post}
+		t.pendingGroups[msg.MediaGroupID] = pg
+		t.scheduleFlushLocked(msg.MediaGroupID, pg)
 		return
 	}
-
-	t.flushPendingGroupLocked()
 
 	post := t.convert(ctx, msg)
 	if post == nil {
 		return
 	}
-
-	if msg.MediaGroupID == "" {
-		t.buffer = append(t.buffer, post)
-		return
-	}
-
-	t.pendingGroupID = msg.MediaGroupID
-	t.pendingGroup = post
-	t.scheduleFlushLocked()
+	t.buffer = append(t.buffer, post)
 }
 
-func (t *TelegramClient) mergeIntoPendingGroupLocked(ctx context.Context, msg *models.Message) {
+func (t *TelegramClient) mergeIntoPendingLocked(ctx context.Context, pg *pendingMediaGroup, msg *models.Message) {
 	for _, url := range t.mediaURLs(ctx, msg) {
-		t.pendingGroup.Media = append(t.pendingGroup.Media, *NewMediaFromURL(url))
+		pg.post.Media = append(pg.post.Media, *NewMediaFromURL(url))
 	}
-	if t.pendingGroup.Content == "" && msg.Caption != "" {
-		t.pendingGroup.Content = stripEntities(msg.Caption, msg.CaptionEntities)
+	if pg.post.Content == "" && msg.Caption != "" {
+		pg.post.Content = stripEntities(msg.Caption, msg.CaptionEntities)
 	}
-	t.scheduleFlushLocked()
+	t.scheduleFlushLocked(msg.MediaGroupID, pg)
 }
 
-func (t *TelegramClient) scheduleFlushLocked() {
-	if t.flushTimer != nil {
-		t.flushTimer.Stop()
+func (t *TelegramClient) scheduleFlushLocked(groupID string, pg *pendingMediaGroup) {
+	if pg.timer != nil {
+		pg.timer.Stop()
 	}
-	t.flushTimer = time.AfterFunc(mediaGroupFlushDelay, func() {
+	pg.timer = time.AfterFunc(mediaGroupFlushDelay, func() {
 		t.mu.Lock()
 		defer t.mu.Unlock()
-		t.flushPendingGroupLocked()
+		t.flushGroupLocked(groupID)
 	})
 }
 
-func (t *TelegramClient) flushPendingGroupLocked() {
-	if t.pendingGroup == nil {
+func (t *TelegramClient) flushGroupLocked(groupID string) {
+	pg, ok := t.pendingGroups[groupID]
+	if !ok {
 		return
 	}
-	t.buffer = append(t.buffer, t.pendingGroup)
-	t.pendingGroup = nil
-	t.pendingGroupID = ""
+	t.buffer = append(t.buffer, pg.post)
+	delete(t.pendingGroups, groupID)
 }
 
 // convert builds a Post from a Telegram message. Returns nil if the message
