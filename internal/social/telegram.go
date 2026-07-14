@@ -259,7 +259,7 @@ func (t *TelegramClient) mediaURLs(ctx context.Context, msg *models.Message) []s
 // downloads its bytes over Telegram's temporary file-serving URL, uploads
 // them to object storage, and returns the permanent CDN URL.
 func (t *TelegramClient) downloadAndStoreFile(ctx context.Context, fileID string) (string, error) {
-	if t.objectStorage == nil {
+	if t.objectStorage == nil || t.cdnDomain == "" {
 		return "", fmt.Errorf("telegram: no object storage configured")
 	}
 
