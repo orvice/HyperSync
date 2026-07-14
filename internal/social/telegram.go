@@ -1,16 +1,24 @@
 package social
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf16"
 
 	tgbot "github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
+	"github.com/google/uuid"
+
+	"go.orx.me/apps/hyper-sync/internal/media"
 )
 
 // SyncCursorDao persists polling offsets for pull-based content sources.
@@ -32,9 +40,11 @@ const mediaGroupFlushDelay = 700 * time.Millisecond
 // buffered so far. The polling offset is persisted via cursor after every
 // processed update so a restart resumes where it left off.
 type TelegramClient struct {
-	bot    *tgbot.Bot
-	name   string
-	cursor SyncCursorDao
+	bot           *tgbot.Bot
+	name          string
+	cursor        SyncCursorDao
+	objectStorage media.ObjectStorage
+	cdnDomain     string
 
 	cancel context.CancelFunc
 
@@ -45,10 +55,12 @@ type TelegramClient struct {
 	flushTimer     *time.Timer
 }
 
-func NewTelegramClient(botToken, channelID, name, apiBase string, cursor SyncCursorDao) (*TelegramClient, error) {
+func NewTelegramClient(botToken, channelID, name, apiBase string, cursor SyncCursorDao, objectStorage media.ObjectStorage, cdnDomain string) (*TelegramClient, error) {
 	t := &TelegramClient{
-		name:   name,
-		cursor: cursor,
+		name:          name,
+		cursor:        cursor,
+		objectStorage: objectStorage,
+		cdnDomain:     cdnDomain,
 	}
 
 	var offset int64
@@ -217,14 +229,15 @@ func (t *TelegramClient) convert(ctx context.Context, msg *models.Message) *Post
 	}
 }
 
-// mediaURLs resolves the download URL for a message's photo (largest size
-// only) or video, if present.
+// mediaURLs downloads a message's photo (largest size only) and/or video, if
+// present, and uploads each to object storage, returning their permanent
+// CDN URLs. Telegram's own temporary file-serving URLs are never returned.
 func (t *TelegramClient) mediaURLs(ctx context.Context, msg *models.Message) []string {
 	var urls []string
 
 	if len(msg.Photo) > 0 {
 		largest := msg.Photo[len(msg.Photo)-1]
-		if url, err := t.getFileURL(ctx, largest.FileID); err == nil {
+		if url, err := t.downloadAndStoreFile(ctx, largest.FileID); err == nil {
 			urls = append(urls, url)
 		} else {
 			log.Printf("telegram: get photo file: %v", err)
@@ -232,7 +245,7 @@ func (t *TelegramClient) mediaURLs(ctx context.Context, msg *models.Message) []s
 	}
 
 	if msg.Video != nil {
-		if url, err := t.getFileURL(ctx, msg.Video.FileID); err == nil {
+		if url, err := t.downloadAndStoreFile(ctx, msg.Video.FileID); err == nil {
 			urls = append(urls, url)
 		} else {
 			log.Printf("telegram: get video file: %v", err)
@@ -242,12 +255,41 @@ func (t *TelegramClient) mediaURLs(ctx context.Context, msg *models.Message) []s
 	return urls
 }
 
-func (t *TelegramClient) getFileURL(ctx context.Context, fileID string) (string, error) {
+// downloadAndStoreFile fetches a Telegram file by ID via the Bot API,
+// downloads its bytes over Telegram's temporary file-serving URL, uploads
+// them to object storage, and returns the permanent CDN URL.
+func (t *TelegramClient) downloadAndStoreFile(ctx context.Context, fileID string) (string, error) {
+	if t.objectStorage == nil {
+		return "", fmt.Errorf("telegram: no object storage configured")
+	}
+
 	file, err := t.bot.GetFile(ctx, &tgbot.GetFileParams{FileID: fileID})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("telegram: get file: %w", err)
 	}
-	return t.bot.FileDownloadLink(file), nil
+	tempURL := t.bot.FileDownloadLink(file)
+
+	resp, err := http.Get(tempURL)
+	if err != nil {
+		return "", fmt.Errorf("telegram: download file: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("telegram: download file: status code %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("telegram: read file: %w", err)
+	}
+
+	contentType := http.DetectContentType(data)
+	key := fmt.Sprintf("telegram/%s/%s-%s", time.Now().Format("2006/01/02"), uuid.New().String(), filepath.Base(file.FilePath))
+	if err := t.objectStorage.Upload(ctx, key, contentType, bytes.NewReader(data)); err != nil {
+		return "", fmt.Errorf("telegram: upload file: %w", err)
+	}
+
+	return fmt.Sprintf("%s/%s", strings.TrimSuffix(t.cdnDomain, "/"), key), nil
 }
 
 // stripEntities processes Telegram entities on a text string.
