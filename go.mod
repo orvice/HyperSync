@@ -11,6 +11,7 @@ require (
 	github.com/bsm/redislock v0.9.4
 	github.com/davhofer/botsky v0.0.0-20250218025645-d30f6a2851dd
 	github.com/gin-gonic/gin v1.10.0
+	github.com/go-telegram/bot v1.22.0
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/google/uuid v1.6.0
 	github.com/google/wire v0.6.0
