@@ -18,7 +18,8 @@ func NewSyncService(mainSocial string, socials []string) (*service.SyncService, 
 	postDao := dao.NewPostDao(client)
 	socialConfigDao := dao.NewSocialConfigDao(client)
 	threadsConfigAdapter := dao.NewThreadsConfigAdapter(socialConfigDao)
-	socialService, err := service.NewSocialService(threadsConfigAdapter)
+	syncCursorDao := dao.NewSyncCursorDao(client)
+	socialService, err := service.NewSocialService(threadsConfigAdapter, syncCursorDao)
 	if err != nil {
 		return nil, err
 	}
@@ -35,7 +36,8 @@ func NewSchedulerService() (*service.SchedulerService, error) {
 	client := dao.NewMongoClient()
 	socialConfigDao := dao.NewSocialConfigDao(client)
 	threadsConfigAdapter := dao.NewThreadsConfigAdapter(socialConfigDao)
-	socialService, err := service.NewSocialService(threadsConfigAdapter)
+	syncCursorDao := dao.NewSyncCursorDao(client)
+	socialService, err := service.NewSocialService(threadsConfigAdapter, syncCursorDao)
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +51,8 @@ func NewSocialServiceOnly() (*service.SocialService, error) {
 	client := dao.NewMongoClient()
 	socialConfigDao := dao.NewSocialConfigDao(client)
 	threadsConfigAdapter := dao.NewThreadsConfigAdapter(socialConfigDao)
-	socialService, err := service.NewSocialService(threadsConfigAdapter)
+	syncCursorDao := dao.NewSyncCursorDao(client)
+	socialService, err := service.NewSocialService(threadsConfigAdapter, syncCursorDao)
 	if err != nil {
 		return nil, err
 	}

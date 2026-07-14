@@ -15,6 +15,7 @@ func NewSyncService(mainSocial string, socials []string) (*service.SyncService, 
 		dao.NewMongoClient,
 		dao.NewPostDao,
 		dao.NewSocialConfigDao,
+		dao.NewSyncCursorDao,
 		dao.NewThreadsConfigAdapter,
 		dao.NewLocker,
 		dao.NewRedisClient,
@@ -28,6 +29,7 @@ func NewSchedulerService() (*service.SchedulerService, error) {
 	panic(wire.Build(
 		dao.NewMongoClient,
 		dao.NewSocialConfigDao,
+		dao.NewSyncCursorDao,
 		dao.NewThreadsConfigAdapter,
 		dao.NewLocker,
 		dao.NewRedisClient,
@@ -41,6 +43,7 @@ func NewSocialServiceOnly() (*service.SocialService, error) {
 	panic(wire.Build(
 		dao.NewMongoClient,
 		dao.NewSocialConfigDao,
+		dao.NewSyncCursorDao,
 		dao.NewThreadsConfigAdapter,
 		service.NewSocialService,
 		wire.Bind(new(social.TokenManager), new(*dao.ThreadsConfigAdapter)),

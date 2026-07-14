@@ -3,6 +3,8 @@ package dao
 import (
 	bmongo "butterfly.orx.me/core/store/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo"
+
+	"go.orx.me/apps/hyper-sync/internal/social"
 )
 
 type MongoDAO struct {
@@ -29,6 +31,6 @@ func NewSocialConfigDao(client *mongo.Client) SocialConfigDao {
 	return NewMongoDAO(client)
 }
 
-func NewSyncCursorDao(client *mongo.Client) *MongoDAO {
+func NewSyncCursorDao(client *mongo.Client) social.SyncCursorDao {
 	return NewMongoDAO(client)
 }

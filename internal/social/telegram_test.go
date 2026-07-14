@@ -533,7 +533,7 @@ func TestInitSocialPlatforms_Telegram(t *testing.T) {
 		},
 	}
 
-	platforms, err := InitSocialPlatforms(configs, nil)
+	platforms, err := InitSocialPlatforms(configs, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, platforms, 1)
 
@@ -554,7 +554,7 @@ func TestInitSocialPlatforms_Telegram_MissingConfig(t *testing.T) {
 		},
 	}
 
-	_, err := InitSocialPlatforms(configs, nil)
+	_, err := InitSocialPlatforms(configs, nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "missing Telegram config")
 }
@@ -571,7 +571,7 @@ func TestInitSocialPlatforms_Telegram_MissingCredentials(t *testing.T) {
 		},
 	}
 
-	_, err := InitSocialPlatforms(configs, nil)
+	_, err := InitSocialPlatforms(configs, nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "missing Telegram credentials")
 }

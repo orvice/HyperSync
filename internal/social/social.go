@@ -535,7 +535,7 @@ func CrossPost(ctx context.Context, post *Post, platforms []*SocialPlatform) (ma
 }
 
 // InitSocialPlatforms initializes social clients from configuration
-func InitSocialPlatforms(configs map[string]*PlatformConfig, tokenManager TokenManager) ([]*SocialPlatform, error) {
+func InitSocialPlatforms(configs map[string]*PlatformConfig, tokenManager TokenManager, cursorDao SyncCursorDao) ([]*SocialPlatform, error) {
 	var platforms []*SocialPlatform
 
 	for name, config := range configs {
@@ -605,7 +605,7 @@ func InitSocialPlatforms(configs map[string]*PlatformConfig, tokenManager TokenM
 			if config.Telegram.BotToken == "" || config.Telegram.ChannelID == "" {
 				return nil, fmt.Errorf("missing Telegram credentials for %s", name)
 			}
-			client = NewTelegramClient(config.Telegram.BotToken, config.Telegram.ChannelID, config.Name, "", nil)
+			client = NewTelegramClient(config.Telegram.BotToken, config.Telegram.ChannelID, config.Name, "", cursorDao)
 
 		default:
 			return nil, fmt.Errorf("unsupported platform type %s for %s", config.Type, name)
