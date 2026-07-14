@@ -28,3 +28,7 @@ func NewPostDao(client *mongo.Client) PostDao {
 func NewSocialConfigDao(client *mongo.Client) SocialConfigDao {
 	return NewMongoDAO(client)
 }
+
+func NewSyncCursorDao(client *mongo.Client) *MongoDAO {
+	return NewMongoDAO(client)
+}

@@ -13,7 +13,7 @@ An uploaded file (image/video) stored in S3-compatible object storage. Exists in
 _Avoid_: Attachment, resource, asset
 
 **Platform**:
-An external social service that HyperSync syncs Posts to (e.g. Mastodon, Bluesky, Threads, Memos). All platforms are sync targets; none are content sources.
+An external social service that HyperSync connects to (e.g. Mastodon, Bluesky, Threads, Memos, Telegram). A Platform may be a sync target, a content source, or both.
 _Avoid_: Social, target, destination
 
 **Sync**:
