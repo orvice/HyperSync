@@ -600,14 +600,17 @@ func InitSocialPlatforms(configs map[string]*PlatformConfig, tokenManager TokenM
 				return nil, fmt.Errorf("failed to initialize Threads client for %s: %w", name, err)
 			}
 
-		case PlatformTelegram.String():
-			if config.Telegram == nil {
-				return nil, fmt.Errorf("missing Telegram config for %s", name)
-			}
-			if config.Telegram.BotToken == "" || config.Telegram.ChannelID == "" {
-				return nil, fmt.Errorf("missing Telegram credentials for %s", name)
-			}
-			client, err = NewTelegramClient(config.Telegram.BotToken, config.Telegram.ChannelID, config.Name, "", cursorDao, objectStorage, cdnDomain)
+	case PlatformTelegram.String():
+		if config.Telegram == nil {
+			return nil, fmt.Errorf("missing Telegram config for %s", name)
+		}
+		if config.Telegram.BotToken == "" || config.Telegram.ChannelID == "" {
+			return nil, fmt.Errorf("missing Telegram credentials for %s", name)
+		}
+		if config.SyncDelay == 0 {
+			config.SyncDelay = 3 * time.Minute
+		}
+		client, err = NewTelegramClient(config.Telegram.BotToken, config.Telegram.ChannelID, config.Name, "", cursorDao, objectStorage, cdnDomain)
 			if err != nil {
 				return nil, fmt.Errorf("failed to initialize Telegram client for %s: %w", name, err)
 			}

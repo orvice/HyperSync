@@ -650,6 +650,53 @@ func TestInitSocialPlatforms_Telegram(t *testing.T) {
 	tgClient.Close()
 }
 
+func TestInitSocialPlatforms_Telegram_DefaultSyncDelay(t *testing.T) {
+	configs := map[string]*PlatformConfig{
+		"my-tg": {
+			Type:    "telegram",
+			Enabled: true,
+			Telegram: &TelegramConfig{
+				BotToken:  "123:ABC",
+				ChannelID: "-1001234567890",
+			},
+		},
+	}
+
+	platforms, err := InitSocialPlatforms(configs, nil, nil, nil, "")
+	require.NoError(t, err)
+	require.Len(t, platforms, 1)
+
+	assert.Equal(t, 3*time.Minute, platforms[0].Config.SyncDelay,
+		"Telegram should default to 3 minute sync delay")
+
+	tgClient := platforms[0].Client.(*TelegramClient)
+	tgClient.Close()
+}
+
+func TestInitSocialPlatforms_Telegram_CustomSyncDelay(t *testing.T) {
+	configs := map[string]*PlatformConfig{
+		"my-tg": {
+			Type:      "telegram",
+			Enabled:   true,
+			SyncDelay: 5 * time.Minute,
+			Telegram: &TelegramConfig{
+				BotToken:  "123:ABC",
+				ChannelID: "-1001234567890",
+			},
+		},
+	}
+
+	platforms, err := InitSocialPlatforms(configs, nil, nil, nil, "")
+	require.NoError(t, err)
+	require.Len(t, platforms, 1)
+
+	assert.Equal(t, 5*time.Minute, platforms[0].Config.SyncDelay,
+		"explicit sync delay should override default")
+
+	tgClient := platforms[0].Client.(*TelegramClient)
+	tgClient.Close()
+}
+
 func TestInitSocialPlatforms_Telegram_MissingConfig(t *testing.T) {
 	configs := map[string]*PlatformConfig{
 		"bad-tg": {

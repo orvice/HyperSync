@@ -18,6 +18,10 @@ type PlatformConfig struct {
 	Memos    *MemosConfig    `yaml:"memos,omitempty"`    // Memos 特定配置
 	Threads  *ThreadsConfig  `yaml:"threads,omitempty"`  // Threads 特定配置
 	Telegram *TelegramConfig `yaml:"telegram,omitempty"`
+
+	// SyncDelay is how long after a post's CreatedAt before cross-posting
+	// begins. Gives the author time to edit or delete before content fans out.
+	SyncDelay time.Duration `yaml:"sync_delay"`
 }
 
 type MemosConfig struct {

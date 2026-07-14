@@ -81,6 +81,7 @@ socials:
     name: telegram
     type: telegram
     enabled: true
+    sync_delay: 3m            # wait before cross-posting (default 3m)
     sync_to:
       - mastodon
       - bluesky
@@ -132,6 +133,7 @@ sync:
 - **telegram**: Telegram channel ingestion (content source only, not a sync target)
   - `bot_token`: Bot API token from [@BotFather](https://t.me/BotFather)
   - `channel_id`: Channel ID (numeric, usually starts with `-100`)
+  - `sync_delay`: How long to wait after a post arrives before cross-posting (default `3m`). Set on the platform block, not inside `telegram:`.
 
 #### Storage Configuration
 
