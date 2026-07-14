@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,42 +14,133 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// fakeTelegramServer emulates the subset of the Telegram Bot API that
+// go-telegram/bot's long-polling loop and file lookups exercise. Batches of
+// updates are queued and handed out one per getUpdates request, in order;
+// once the queue is empty it keeps returning an empty result (like Telegram
+// does when there's nothing new).
+type fakeTelegramServer struct {
+	*httptest.Server
+
+	mu             sync.Mutex
+	batches        [][]map[string]any
+	files          map[string]string // file_id -> file_path
+	requestOffsets []string
+}
+
+func newFakeTelegramServer(t *testing.T) *fakeTelegramServer {
+	t.Helper()
+	f := &fakeTelegramServer{files: make(map[string]string)}
+	f.Server = httptest.NewServer(http.HandlerFunc(f.handle))
+	t.Cleanup(f.Close)
+	return f
+}
+
+func (f *fakeTelegramServer) handle(w http.ResponseWriter, r *http.Request) {
+	switch {
+	case strings.HasSuffix(r.URL.Path, "/getUpdates"):
+		f.mu.Lock()
+		f.requestOffsets = append(f.requestOffsets, r.FormValue("offset"))
+		var batch []map[string]any
+		if len(f.batches) > 0 {
+			batch = f.batches[0]
+			f.batches = f.batches[1:]
+		}
+		f.mu.Unlock()
+
+		// Throttle so an empty-queue loop doesn't spin at full CPU.
+		if batch == nil {
+			time.Sleep(15 * time.Millisecond)
+			batch = []map[string]any{}
+		}
+		writeJSON(w, map[string]any{"ok": true, "result": batch})
+
+	case strings.HasSuffix(r.URL.Path, "/getFile"):
+		fileID := r.FormValue("file_id")
+		f.mu.Lock()
+		path := f.files[fileID]
+		f.mu.Unlock()
+		writeJSON(w, map[string]any{
+			"ok":     true,
+			"result": map[string]any{"file_id": fileID, "file_path": path},
+		})
+
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func (f *fakeTelegramServer) pushBatch(batch []map[string]any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.batches = append(f.batches, batch)
+}
+
+func (f *fakeTelegramServer) setFile(fileID, filePath string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.files[fileID] = filePath
+}
+
+func (f *fakeTelegramServer) offsets() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.requestOffsets...)
+}
+
+// waitForPosts polls ListPosts until at least want posts have been
+// collected or timeout elapses.
+func waitForPosts(t *testing.T, client *TelegramClient, want int, timeout time.Duration) []*Post {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var collected []*Post
+	for time.Now().Before(deadline) {
+		posts, err := client.ListPosts(context.Background(), 0)
+		require.NoError(t, err)
+		collected = append(collected, posts...)
+		if len(collected) >= want {
+			return collected
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d posts, got %d: %+v", want, len(collected), collected)
+	return nil
+}
+
+// assertNoMorePosts checks ListPosts stays empty for a short grace period.
+func assertNoMorePosts(t *testing.T, client *TelegramClient, wait time.Duration) {
+	t.Helper()
+	time.Sleep(wait)
+	posts, err := client.ListPosts(context.Background(), 0)
+	require.NoError(t, err)
+	assert.Empty(t, posts)
+}
+
 func TestTelegram_ListPosts_SingleTextMessage(t *testing.T) {
 	msgDate := time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/bottest-token/getUpdates" {
-			t.Errorf("unexpected path: %s", r.URL.Path)
-			http.NotFound(w, r)
-			return
-		}
-
-		resp := map[string]interface{}{
-			"ok": true,
-			"result": []map[string]interface{}{
-				{
-					"update_id": 100,
-					"channel_post": map[string]interface{}{
-						"message_id": 42,
-						"date":       msgDate.Unix(),
-						"text":       "Hello from Telegram",
-						"chat": map[string]interface{}{
-							"id":   -1001234567890,
-							"type": "channel",
-						},
-					},
-				},
+	server := newFakeTelegramServer(t)
+	server.pushBatch([]map[string]any{
+		{
+			"update_id": 100,
+			"channel_post": map[string]any{
+				"message_id": 42,
+				"date":       msgDate.Unix(),
+				"text":       "Hello from Telegram",
+				"chat":       map[string]any{"id": -1001234567890, "type": "channel"},
 			},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
+		},
+	})
 
-	client := NewTelegramClient("test-token", "-1001234567890", "my-telegram", server.URL, nil)
-
-	posts, err := client.ListPosts(context.Background(), 10)
+	client, err := NewTelegramClient("test-token", "-1001234567890", "my-telegram", server.URL, nil)
 	require.NoError(t, err)
+	defer client.Close()
+
+	posts := waitForPosts(t, client, 1, 3*time.Second)
 	require.Len(t, posts, 1)
 
 	post := posts[0]
@@ -62,61 +155,30 @@ func TestTelegram_ListPosts_SingleTextMessage(t *testing.T) {
 
 func TestTelegram_ListPosts_PhotoWithCaption(t *testing.T) {
 	msgDate := time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/bottest-token/getUpdates":
-			resp := map[string]interface{}{
-				"ok": true,
-				"result": []map[string]interface{}{
-					{
-						"update_id": 200,
-						"channel_post": map[string]interface{}{
-							"message_id": 55,
-							"date":       msgDate.Unix(),
-							"caption":    "A beautiful sunset",
-							"chat": map[string]interface{}{
-								"id":   -1001234567890,
-								"type": "channel",
-							},
-							"photo": []map[string]interface{}{
-								{"file_id": "small_id", "file_unique_id": "s1", "width": 90, "height": 90, "file_size": 1000},
-								{"file_id": "medium_id", "file_unique_id": "s2", "width": 320, "height": 320, "file_size": 5000},
-								{"file_id": "large_id", "file_unique_id": "s3", "width": 800, "height": 800, "file_size": 50000},
-							},
-						},
-					},
+	server := newFakeTelegramServer(t)
+	server.setFile("large_id", "photos/file_123.jpg")
+	server.pushBatch([]map[string]any{
+		{
+			"update_id": 200,
+			"channel_post": map[string]any{
+				"message_id": 55,
+				"date":       msgDate.Unix(),
+				"caption":    "A beautiful sunset",
+				"chat":       map[string]any{"id": -1001234567890, "type": "channel"},
+				"photo": []map[string]any{
+					{"file_id": "small_id", "file_unique_id": "s1", "width": 90, "height": 90},
+					{"file_id": "medium_id", "file_unique_id": "s2", "width": 320, "height": 320},
+					{"file_id": "large_id", "file_unique_id": "s3", "width": 800, "height": 800},
 				},
-			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(resp)
+			},
+		},
+	})
 
-		case "/bottest-token/getFile":
-			fileID := r.URL.Query().Get("file_id")
-			if fileID != "large_id" {
-				t.Errorf("expected getFile for large_id, got %s", fileID)
-			}
-			resp := map[string]interface{}{
-				"ok": true,
-				"result": map[string]interface{}{
-					"file_id":   "large_id",
-					"file_path": "photos/file_123.jpg",
-				},
-			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(resp)
-
-		default:
-			t.Errorf("unexpected request path: %s", r.URL.Path)
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	client := NewTelegramClient("test-token", "-1001234567890", "my-telegram", server.URL, nil)
-
-	posts, err := client.ListPosts(context.Background(), 10)
+	client, err := NewTelegramClient("test-token", "-1001234567890", "my-telegram", server.URL, nil)
 	require.NoError(t, err)
+	defer client.Close()
+
+	posts := waitForPosts(t, client, 1, 3*time.Second)
 	require.Len(t, posts, 1)
 
 	post := posts[0]
@@ -129,186 +191,57 @@ func TestTelegram_ListPosts_PhotoWithCaption(t *testing.T) {
 	assert.Equal(t, expectedURL, post.Media[0].GetURL())
 }
 
-func TestMergeMediaGroups(t *testing.T) {
-	tests := []struct {
-		name     string
-		updates  []tgUpdate
-		wantLen  int
-		checkFn  func(t *testing.T, merged []tgUpdate)
-	}{
-		{
-			name: "three photos in one group become single update",
-			updates: []tgUpdate{
-				{UpdateID: 1, ChannelPost: &tgMessage{
-					MessageID:    10,
-					Date:         1000,
-					Caption:      "Album caption",
-					MediaGroupID: "g1",
-					Photo:        []tgPhotoSize{{FileID: "a1", Width: 800, Height: 600}},
-				}},
-				{UpdateID: 2, ChannelPost: &tgMessage{
-					MessageID:    11,
-					Date:         1001,
-					MediaGroupID: "g1",
-					Photo:        []tgPhotoSize{{FileID: "a2", Width: 800, Height: 600}},
-				}},
-				{UpdateID: 3, ChannelPost: &tgMessage{
-					MessageID:    12,
-					Date:         1002,
-					MediaGroupID: "g1",
-					Photo:        []tgPhotoSize{{FileID: "a3", Width: 800, Height: 600}},
-				}},
-			},
-			wantLen: 1,
-			checkFn: func(t *testing.T, merged []tgUpdate) {
-				msg := merged[0].ChannelPost
-				assert.Equal(t, "Album caption", msg.Caption)
-				assert.Len(t, msg.Photo, 3)
-				assert.Equal(t, "a1", msg.Photo[0].FileID)
-				assert.Equal(t, "a2", msg.Photo[1].FileID)
-				assert.Equal(t, "a3", msg.Photo[2].FileID)
-				assert.Equal(t, int64(3), merged[0].UpdateID, "merged update should keep max update_id")
-			},
-		},
-		{
-			name: "standalone text update unchanged",
-			updates: []tgUpdate{
-				{UpdateID: 5, ChannelPost: &tgMessage{
-					MessageID: 20,
-					Date:      2000,
-					Text:      "Just text",
-				}},
-			},
-			wantLen: 1,
-			checkFn: func(t *testing.T, merged []tgUpdate) {
-				assert.Equal(t, "Just text", merged[0].ChannelPost.Text)
-				assert.Empty(t, merged[0].ChannelPost.Photo)
-			},
-		},
-		{
-			name: "mixed: group + standalone",
-			updates: []tgUpdate{
-				{UpdateID: 10, ChannelPost: &tgMessage{
-					MessageID:    30,
-					Date:         3000,
-					Caption:      "Group photo",
-					MediaGroupID: "g2",
-					Photo:        []tgPhotoSize{{FileID: "b1", Width: 800, Height: 600}},
-				}},
-				{UpdateID: 11, ChannelPost: &tgMessage{
-					MessageID: 31,
-					Date:      3001,
-					Text:      "Standalone text",
-				}},
-				{UpdateID: 12, ChannelPost: &tgMessage{
-					MessageID:    32,
-					Date:         3002,
-					MediaGroupID: "g2",
-					Photo:        []tgPhotoSize{{FileID: "b2", Width: 800, Height: 600}},
-				}},
-			},
-			wantLen: 2,
-			checkFn: func(t *testing.T, merged []tgUpdate) {
-				// Group comes first in insertion order, standalone second
-				group := merged[0]
-				standalone := merged[1]
-				assert.Equal(t, "Group photo", group.ChannelPost.Caption)
-				assert.Len(t, group.ChannelPost.Photo, 2)
-				assert.Equal(t, "Standalone text", standalone.ChannelPost.Text)
-			},
-		},
-		{
-			name: "caption from first captioned message in group",
-			updates: []tgUpdate{
-				{UpdateID: 20, ChannelPost: &tgMessage{
-					MessageID:    40,
-					Date:         4000,
-					MediaGroupID: "g3",
-					Photo:        []tgPhotoSize{{FileID: "c1", Width: 800, Height: 600}},
-				}},
-				{UpdateID: 21, ChannelPost: &tgMessage{
-					MessageID:    41,
-					Date:         4001,
-					Caption:      "Caption on second",
-					MediaGroupID: "g3",
-					Photo:        []tgPhotoSize{{FileID: "c2", Width: 800, Height: 600}},
-				}},
-			},
-			wantLen: 1,
-			checkFn: func(t *testing.T, merged []tgUpdate) {
-				assert.Equal(t, "Caption on second", merged[0].ChannelPost.Caption)
-				assert.Len(t, merged[0].ChannelPost.Photo, 2)
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			merged := mergeMediaGroups(tt.updates)
-			require.Len(t, merged, tt.wantLen)
-			if tt.checkFn != nil {
-				tt.checkFn(t, merged)
-			}
-		})
-	}
-}
-
 func TestTelegram_ListPosts_SkippedMessageTypes(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := map[string]interface{}{
-			"ok": true,
-			"result": []map[string]interface{}{
-				{
-					"update_id": 300,
-					"channel_post": map[string]interface{}{
-						"message_id": 60,
-						"date":       1000,
-						"sticker":    map[string]interface{}{"file_id": "sticker1"},
-						"chat":       map[string]interface{}{"id": -100, "type": "channel"},
-					},
-				},
-				{
-					"update_id": 301,
-					"channel_post": map[string]interface{}{
-						"message_id": 61,
-						"date":       1001,
-						"poll":       map[string]interface{}{"question": "yes?"},
-						"chat":       map[string]interface{}{"id": -100, "type": "channel"},
-					},
-				},
-				{
-					"update_id": 302,
-					"channel_post": map[string]interface{}{
-						"message_id": 62,
-						"date":       1002,
-						"document":   map[string]interface{}{"file_id": "doc1"},
-						"chat":       map[string]interface{}{"id": -100, "type": "channel"},
-					},
-				},
-				{
-					"update_id": 303,
-					"channel_post": map[string]interface{}{
-						"message_id": 63,
-						"date":       1003,
-						"audio":      map[string]interface{}{"file_id": "audio1"},
-						"chat":       map[string]interface{}{"id": -100, "type": "channel"},
-					},
-				},
+	server := newFakeTelegramServer(t)
+	server.pushBatch([]map[string]any{
+		{
+			"update_id": 300,
+			"channel_post": map[string]any{
+				"message_id": 60,
+				"date":       1000,
+				"sticker":    map[string]any{"file_id": "sticker1", "file_unique_id": "u1", "width": 1, "height": 1, "is_animated": false, "is_video": false},
+				"chat":       map[string]any{"id": -100, "type": "channel"},
 			},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
+		},
+		{
+			"update_id": 301,
+			"channel_post": map[string]any{
+				"message_id": 61,
+				"date":       1001,
+				"poll":       map[string]any{"id": "p1", "question": "yes?", "options": []map[string]any{}, "total_voter_count": 0, "is_closed": false, "is_anonymous": true, "type": "regular", "allows_multiple_answers": false},
+				"chat":       map[string]any{"id": -100, "type": "channel"},
+			},
+		},
+		{
+			"update_id": 302,
+			"channel_post": map[string]any{
+				"message_id": 62,
+				"date":       1002,
+				"document":   map[string]any{"file_id": "doc1", "file_unique_id": "u2"},
+				"chat":       map[string]any{"id": -100, "type": "channel"},
+			},
+		},
+		{
+			"update_id": 303,
+			"channel_post": map[string]any{
+				"message_id": 63,
+				"date":       1003,
+				"audio":      map[string]any{"file_id": "audio1", "file_unique_id": "u3", "duration": 10},
+				"chat":       map[string]any{"id": -100, "type": "channel"},
+			},
+		},
+	})
 
-	client := NewTelegramClient("test-token", "-100", "tg", server.URL, nil)
-	posts, err := client.ListPosts(context.Background(), 10)
+	client, err := NewTelegramClient("test-token", "-100", "tg", server.URL, nil)
 	require.NoError(t, err)
-	assert.Empty(t, posts, "sticker, poll, document, audio messages should be skipped")
+	defer client.Close()
+
+	assertNoMorePosts(t, client, 500*time.Millisecond)
 }
 
 // memoryCursor is an in-memory SyncCursorDao for testing.
 type memoryCursor struct {
+	mu      sync.Mutex
 	offsets map[string]int64
 }
 
@@ -317,95 +250,78 @@ func newMemoryCursor() *memoryCursor {
 }
 
 func (m *memoryCursor) GetOffset(_ context.Context, platform string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.offsets[platform], nil
 }
 
 func (m *memoryCursor) SaveOffset(_ context.Context, platform string, offset int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.offsets[platform] = offset
 	return nil
 }
 
+func (m *memoryCursor) get(platform string) int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.offsets[platform]
+}
+
 func TestTelegram_ListPosts_OffsetAdvancement(t *testing.T) {
-	callCount := 0
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/bottest-token/getUpdates" {
-			http.NotFound(w, r)
-			return
-		}
-
-		offset := r.URL.Query().Get("offset")
-		callCount++
-
-		var result []map[string]interface{}
-		if callCount == 1 {
-			assert.Equal(t, "", offset, "first call should have no offset")
-			result = []map[string]interface{}{
-				{
-					"update_id": 100,
-					"channel_post": map[string]interface{}{
-						"message_id": 1, "date": 1000, "text": "first",
-						"chat": map[string]interface{}{"id": -100, "type": "channel"},
-					},
-				},
-				{
-					"update_id": 105,
-					"channel_post": map[string]interface{}{
-						"message_id": 2, "date": 1001, "text": "second",
-						"chat": map[string]interface{}{"id": -100, "type": "channel"},
-					},
-				},
-			}
-		} else {
-			assert.Equal(t, "106", offset, "second call should send offset=max_update_id+1")
-			result = []map[string]interface{}{}
-		}
-
-		resp := map[string]interface{}{"ok": true, "result": result}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
+	server := newFakeTelegramServer(t)
+	server.pushBatch([]map[string]any{
+		{
+			"update_id": 100,
+			"channel_post": map[string]any{
+				"message_id": 1, "date": 1000, "text": "first",
+				"chat": map[string]any{"id": -100, "type": "channel"},
+			},
+		},
+		{
+			"update_id": 105,
+			"channel_post": map[string]any{
+				"message_id": 2, "date": 1001, "text": "second",
+				"chat": map[string]any{"id": -100, "type": "channel"},
+			},
+		},
+	})
 
 	cursor := newMemoryCursor()
-	client := NewTelegramClient("test-token", "-100", "tg", server.URL, cursor)
-
-	// First call: offset should be empty (0), returns 2 posts
-	posts, err := client.ListPosts(context.Background(), 10)
+	client, err := NewTelegramClient("test-token", "-100", "tg", server.URL, cursor)
 	require.NoError(t, err)
+	defer client.Close()
+
+	posts := waitForPosts(t, client, 2, 3*time.Second)
 	assert.Len(t, posts, 2)
 
-	// Verify offset was saved as max(100, 105) + 1 = 106
-	savedOffset, _ := cursor.GetOffset(context.Background(), "tg")
-	assert.Equal(t, int64(106), savedOffset)
+	require.Eventually(t, func() bool {
+		return cursor.get("tg") == 106
+	}, 2*time.Second, 20*time.Millisecond, "offset should advance to max(update_id)+1")
 
-	// Second call: should send offset=106
-	posts, err = client.ListPosts(context.Background(), 10)
-	require.NoError(t, err)
-	assert.Empty(t, posts)
-	assert.Equal(t, 2, callCount)
+	offsets := server.offsets()
+	require.NotEmpty(t, offsets)
+	assert.Equal(t, "1", offsets[0], "first request should start from offset 1 with no persisted cursor")
+	assert.Contains(t, offsets, "106", "a later request should carry offset=106")
 }
 
 func TestTelegram_ListPosts_EmptyBatch(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := map[string]interface{}{"ok": true, "result": []interface{}{}}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
+	server := newFakeTelegramServer(t)
 
 	cursor := newMemoryCursor()
 	cursor.offsets["tg"] = 50 // pre-existing offset
 
-	client := NewTelegramClient("test-token", "-100", "tg", server.URL, cursor)
-
-	posts, err := client.ListPosts(context.Background(), 10)
+	client, err := NewTelegramClient("test-token", "-100", "tg", server.URL, cursor)
 	require.NoError(t, err)
-	assert.Empty(t, posts)
+	defer client.Close()
 
-	// Offset should remain unchanged
-	savedOffset, _ := cursor.GetOffset(context.Background(), "tg")
-	assert.Equal(t, int64(50), savedOffset, "offset should not change on empty batch")
+	require.Eventually(t, func() bool {
+		offsets := server.offsets()
+		return len(offsets) > 0 && offsets[0] == "50"
+	}, 2*time.Second, 20*time.Millisecond, "first request should carry the persisted offset")
+
+	assertNoMorePosts(t, client, 200*time.Millisecond)
+	assert.Equal(t, int64(50), cursor.get("tg"), "offset should not change on empty batches")
 }
 
 func TestTelegram_ListPosts_EntityStripping(t *testing.T) {
@@ -413,97 +329,72 @@ func TestTelegram_ListPosts_EntityStripping(t *testing.T) {
 	// are just metadata annotations — the text itself doesn't contain markup.
 	// text_link is special: it associates a URL with a text range. We want
 	// to append the URL after the link text so it's not lost in plain text.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := map[string]interface{}{
-			"ok": true,
-			"result": []map[string]interface{}{
-				{
-					"update_id": 400,
-					"channel_post": map[string]interface{}{
-						"message_id": 70,
-						"date":       1000,
-						"text":       "Check this link and bold text here",
-						"chat":       map[string]interface{}{"id": -100, "type": "channel"},
-						"entities": []map[string]interface{}{
-							{"type": "text_link", "offset": 11, "length": 4, "url": "https://example.com"},
-							{"type": "bold", "offset": 20, "length": 4},
-							{"type": "mention", "offset": 30, "length": 4},
-						},
-					},
+	server := newFakeTelegramServer(t)
+	server.pushBatch([]map[string]any{
+		{
+			"update_id": 400,
+			"channel_post": map[string]any{
+				"message_id": 70,
+				"date":       1000,
+				"text":       "Check this link and bold text here",
+				"chat":       map[string]any{"id": -100, "type": "channel"},
+				"entities": []map[string]any{
+					{"type": "text_link", "offset": 11, "length": 4, "url": "https://example.com"},
+					{"type": "bold", "offset": 20, "length": 4},
+					{"type": "mention", "offset": 30, "length": 4},
 				},
 			},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
+		},
+	})
 
-	client := NewTelegramClient("test-token", "-100", "tg", server.URL, nil)
-	posts, err := client.ListPosts(context.Background(), 10)
+	client, err := NewTelegramClient("test-token", "-100", "tg", server.URL, nil)
 	require.NoError(t, err)
+	defer client.Close()
+
+	posts := waitForPosts(t, client, 1, 3*time.Second)
 	require.Len(t, posts, 1)
 
-	// text_link URL should be appended after the link text
 	assert.Equal(t, "Check this link (https://example.com) and bold text here", posts[0].Content)
 }
 
 func TestTelegram_ListPosts_MediaGroupMerge(t *testing.T) {
 	msgDate := time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/bottest-token/getUpdates":
-			resp := map[string]interface{}{
-				"ok": true,
-				"result": []map[string]interface{}{
-					{
-						"update_id": 500,
-						"channel_post": map[string]interface{}{
-							"message_id":     70,
-							"date":           msgDate.Unix(),
-							"caption":        "Album title",
-							"media_group_id": "album1",
-							"chat":           map[string]interface{}{"id": -100, "type": "channel"},
-							"photo": []map[string]interface{}{
-								{"file_id": "p1", "file_unique_id": "u1", "width": 800, "height": 600},
-							},
-						},
-					},
-					{
-						"update_id": 501,
-						"channel_post": map[string]interface{}{
-							"message_id":     71,
-							"date":           msgDate.Unix(),
-							"media_group_id": "album1",
-							"chat":           map[string]interface{}{"id": -100, "type": "channel"},
-							"photo": []map[string]interface{}{
-								{"file_id": "p2", "file_unique_id": "u2", "width": 800, "height": 600},
-							},
-						},
-					},
+	server := newFakeTelegramServer(t)
+	server.setFile("p1", "photos/p1.jpg")
+	server.setFile("p2", "photos/p2.jpg")
+	server.pushBatch([]map[string]any{
+		{
+			"update_id": 500,
+			"channel_post": map[string]any{
+				"message_id":     70,
+				"date":           msgDate.Unix(),
+				"caption":        "Album title",
+				"media_group_id": "album1",
+				"chat":           map[string]any{"id": -100, "type": "channel"},
+				"photo": []map[string]any{
+					{"file_id": "p1", "file_unique_id": "u1", "width": 800, "height": 600},
 				},
-			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(resp)
+			},
+		},
+		{
+			"update_id": 501,
+			"channel_post": map[string]any{
+				"message_id":     71,
+				"date":           msgDate.Unix(),
+				"media_group_id": "album1",
+				"chat":           map[string]any{"id": -100, "type": "channel"},
+				"photo": []map[string]any{
+					{"file_id": "p2", "file_unique_id": "u2", "width": 800, "height": 600},
+				},
+			},
+		},
+	})
 
-		case "/bottest-token/getFile":
-			fileID := r.URL.Query().Get("file_id")
-			resp := map[string]interface{}{
-				"ok":     true,
-				"result": map[string]interface{}{"file_id": fileID, "file_path": "photos/" + fileID + ".jpg"},
-			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(resp)
-
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	client := NewTelegramClient("test-token", "-100", "tg", server.URL, nil)
-	posts, err := client.ListPosts(context.Background(), 10)
+	client, err := NewTelegramClient("test-token", "-100", "tg", server.URL, nil)
 	require.NoError(t, err)
+	defer client.Close()
+
+	posts := waitForPosts(t, client, 1, 3*time.Second)
 	require.Len(t, posts, 1, "media group should merge into one post")
 
 	post := posts[0]
@@ -514,7 +405,11 @@ func TestTelegram_ListPosts_MediaGroupMerge(t *testing.T) {
 }
 
 func TestTelegram_Post_NotImplemented(t *testing.T) {
-	client := NewTelegramClient("token", "chan", "tg", "", nil)
+	server := newFakeTelegramServer(t)
+	client, err := NewTelegramClient("test-token", "chan", "tg", server.URL, nil)
+	require.NoError(t, err)
+	defer client.Close()
+
 	result, err := client.Post(context.Background(), &Post{Content: "hello"})
 	assert.Nil(t, result)
 	require.Error(t, err)
@@ -541,9 +436,11 @@ func TestInitSocialPlatforms_Telegram(t *testing.T) {
 	assert.Equal(t, "my-tg", p.Name)
 	assert.Equal(t, "my-tg", p.Client.Name())
 
-	// Verify it's actually a TelegramClient
-	_, ok := p.Client.(*TelegramClient)
-	assert.True(t, ok, "client should be *TelegramClient")
+	// Verify it's actually a TelegramClient, then stop its background
+	// long-poll loop (it would otherwise hit the real Telegram API).
+	tgClient, ok := p.Client.(*TelegramClient)
+	require.True(t, ok, "client should be *TelegramClient")
+	tgClient.Close()
 }
 
 func TestInitSocialPlatforms_Telegram_MissingConfig(t *testing.T) {
