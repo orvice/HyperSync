@@ -189,6 +189,18 @@ func (s *SyncService) doSync(ctx context.Context) error {
 			continue
 		}
 
+		if mainSocial.Config.SyncDelay > 0 && time.Since(post.CreatedAt) < mainSocial.Config.SyncDelay {
+			logger.Info("Post too recent, delaying sync",
+				"post_id", post.ID, "age", time.Since(post.CreatedAt), "sync_delay", mainSocial.Config.SyncDelay)
+			s.metrics.IncPostsProcessed(metrics.StatusSkippedOld)
+			s.tracer.SetSpanSkipped(postSpan, "post_too_recent", map[string]interface{}{
+				"post_age_seconds": time.Since(post.CreatedAt).Seconds(),
+				"sync_delay":       mainSocial.Config.SyncDelay.String(),
+			})
+			postSpan.End()
+			continue
+		}
+
 		// Check if post already exists in database
 		ctx, dbSpan := s.tracer.StartDatabaseOperation(ctx, "get_post", post.ID)
 		postModel, err := s.postDao.GetBySocialAndSocialID(ctx, s.mainSocial, post.ID)
