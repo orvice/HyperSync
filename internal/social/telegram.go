@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -17,6 +17,8 @@ import (
 	tgbot "github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"github.com/google/uuid"
+
+	"butterfly.orx.me/core/log"
 
 	"go.orx.me/apps/hyper-sync/internal/media"
 )
@@ -61,6 +63,8 @@ type TelegramClient struct {
 }
 
 func NewTelegramClient(botToken, channelID, name, apiBase string, cursor SyncCursorDao, objectStorage media.ObjectStorage, cdnDomain string) (*TelegramClient, error) {
+	logger := slog.Default()
+
 	t := &TelegramClient{
 		name:          name,
 		cursor:        cursor,
@@ -76,6 +80,9 @@ func NewTelegramClient(botToken, channelID, name, apiBase string, cursor SyncCur
 		if err != nil {
 			return nil, fmt.Errorf("telegram: get offset: %w", err)
 		}
+		logger.Info("loaded polling offset",
+			"client", name,
+			"offset", offset)
 	}
 
 	opts := []tgbot.Option{
@@ -103,6 +110,11 @@ func NewTelegramClient(botToken, channelID, name, apiBase string, cursor SyncCur
 	t.cancel = cancel
 	go b.Start(ctx)
 
+	logger.Info("telegram client started",
+		"client", name,
+		"api_base", apiBase,
+		"has_object_storage", objectStorage != nil)
+
 	return t, nil
 }
 
@@ -124,7 +136,9 @@ var _ SocialClient = (*TelegramClient)(nil)
 
 // ListPosts drains the posts buffered by the background polling loop since
 // the last call. limit <= 0 means "return everything buffered".
-func (t *TelegramClient) ListPosts(_ context.Context, limit int) ([]*Post, error) {
+func (t *TelegramClient) ListPosts(ctx context.Context, limit int) ([]*Post, error) {
+	logger := log.FromContext(ctx)
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -133,36 +147,72 @@ func (t *TelegramClient) ListPosts(_ context.Context, limit int) ([]*Post, error
 	}
 	posts := t.buffer[:limit]
 	t.buffer = t.buffer[limit:]
+
+	logger.Debug("drained buffered posts",
+		"client", t.name,
+		"returned", len(posts),
+		"remaining", len(t.buffer))
+
 	return posts, nil
 }
 
 func (t *TelegramClient) handleUpdate(ctx context.Context, _ *tgbot.Bot, update *models.Update) {
+	logger := log.FromContext(ctx)
+
+	logger.Debug("received update",
+		"client", t.name,
+		"update_id", update.ID)
+
 	if msg := update.ChannelPost; msg != nil {
+		logger.Info("received channel post",
+			"client", t.name,
+			"message_id", msg.ID,
+			"has_text", msg.Text != "",
+			"has_caption", msg.Caption != "",
+			"has_photo", len(msg.Photo) > 0,
+			"has_video", msg.Video != nil,
+			"media_group_id", msg.MediaGroupID)
 		t.ingest(ctx, msg)
 	}
 
 	if t.cursor != nil {
 		if err := t.cursor.SaveOffset(ctx, t.name, update.ID+1); err != nil {
-			log.Printf("telegram: save offset for %s: %v", t.name, err)
+			logger.Error("failed to save offset",
+				"client", t.name,
+				"offset", update.ID+1,
+				"error", err)
 		}
 	}
 }
 
 // ingest merges media-group parts and appends completed posts to buffer.
 func (t *TelegramClient) ingest(ctx context.Context, msg *models.Message) {
+	logger := log.FromContext(ctx)
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	if msg.MediaGroupID != "" {
 		if pg, ok := t.pendingGroups[msg.MediaGroupID]; ok {
+			logger.Debug("merging into existing media group",
+				"client", t.name,
+				"message_id", msg.ID,
+				"media_group_id", msg.MediaGroupID)
 			t.mergeIntoPendingLocked(ctx, pg, msg)
 			return
 		}
 
 		post := t.convert(ctx, msg)
 		if post == nil {
+			logger.Debug("skipped message with no recognizable content",
+				"client", t.name,
+				"message_id", msg.ID)
 			return
 		}
+		logger.Debug("started new media group",
+			"client", t.name,
+			"message_id", msg.ID,
+			"media_group_id", msg.MediaGroupID)
 		pg := &pendingMediaGroup{post: post}
 		t.pendingGroups[msg.MediaGroupID] = pg
 		t.scheduleFlushLocked(msg.MediaGroupID, pg)
@@ -171,9 +221,17 @@ func (t *TelegramClient) ingest(ctx context.Context, msg *models.Message) {
 
 	post := t.convert(ctx, msg)
 	if post == nil {
+		logger.Debug("skipped message with no recognizable content",
+			"client", t.name,
+			"message_id", msg.ID)
 		return
 	}
 	t.buffer = append(t.buffer, post)
+	logger.Info("buffered post",
+		"client", t.name,
+		"post_id", post.ID,
+		"content_len", len(post.Content),
+		"media_count", len(post.Media))
 }
 
 func (t *TelegramClient) mergeIntoPendingLocked(ctx context.Context, pg *pendingMediaGroup, msg *models.Message) {
@@ -204,11 +262,20 @@ func (t *TelegramClient) flushGroupLocked(groupID string) {
 	}
 	t.buffer = append(t.buffer, pg.post)
 	delete(t.pendingGroups, groupID)
+
+	slog.Default().Info("flushed media group",
+		"client", t.name,
+		"media_group_id", groupID,
+		"post_id", pg.post.ID,
+		"content_len", len(pg.post.Content),
+		"media_count", len(pg.post.Media))
 }
 
 // convert builds a Post from a Telegram message. Returns nil if the message
 // carries no content HyperSync understands (e.g. sticker, poll, document).
 func (t *TelegramClient) convert(ctx context.Context, msg *models.Message) *Post {
+	logger := log.FromContext(ctx)
+
 	content := stripEntities(msg.Text, msg.Entities)
 	if content == "" {
 		content = stripEntities(msg.Caption, msg.CaptionEntities)
@@ -225,6 +292,12 @@ func (t *TelegramClient) convert(ctx context.Context, msg *models.Message) *Post
 	}
 
 	id := strconv.Itoa(msg.ID)
+	logger.Debug("converted message to post",
+		"client", t.name,
+		"message_id", msg.ID,
+		"content_len", len(content),
+		"media_count", len(media))
+
 	return &Post{
 		ID:             id,
 		Content:        content,
@@ -240,22 +313,45 @@ func (t *TelegramClient) convert(ctx context.Context, msg *models.Message) *Post
 // present, and uploads each to object storage, returning their permanent
 // CDN URLs. Telegram's own temporary file-serving URLs are never returned.
 func (t *TelegramClient) mediaURLs(ctx context.Context, msg *models.Message) []string {
+	logger := log.FromContext(ctx)
 	var urls []string
 
 	if len(msg.Photo) > 0 {
 		largest := msg.Photo[len(msg.Photo)-1]
+		logger.Debug("downloading photo",
+			"client", t.name,
+			"message_id", msg.ID,
+			"file_id", largest.FileID)
 		if url, err := t.downloadAndStoreFile(ctx, largest.FileID); err == nil {
+			logger.Info("photo uploaded to CDN",
+				"client", t.name,
+				"message_id", msg.ID,
+				"url", url)
 			urls = append(urls, url)
 		} else {
-			log.Printf("telegram: get photo file: %v", err)
+			logger.Error("failed to get photo file",
+				"client", t.name,
+				"message_id", msg.ID,
+				"error", err)
 		}
 	}
 
 	if msg.Video != nil {
+		logger.Debug("downloading video",
+			"client", t.name,
+			"message_id", msg.ID,
+			"file_id", msg.Video.FileID)
 		if url, err := t.downloadAndStoreFile(ctx, msg.Video.FileID); err == nil {
+			logger.Info("video uploaded to CDN",
+				"client", t.name,
+				"message_id", msg.ID,
+				"url", url)
 			urls = append(urls, url)
 		} else {
-			log.Printf("telegram: get video file: %v", err)
+			logger.Error("failed to get video file",
+				"client", t.name,
+				"message_id", msg.ID,
+				"error", err)
 		}
 	}
 
@@ -266,6 +362,8 @@ func (t *TelegramClient) mediaURLs(ctx context.Context, msg *models.Message) []s
 // downloads its bytes over Telegram's temporary file-serving URL, uploads
 // them to object storage, and returns the permanent CDN URL.
 func (t *TelegramClient) downloadAndStoreFile(ctx context.Context, fileID string) (string, error) {
+	logger := log.FromContext(ctx)
+
 	if t.objectStorage == nil || t.cdnDomain == "" {
 		return "", fmt.Errorf("telegram: no object storage configured")
 	}
@@ -275,6 +373,11 @@ func (t *TelegramClient) downloadAndStoreFile(ctx context.Context, fileID string
 		return "", fmt.Errorf("telegram: get file: %w", err)
 	}
 	tempURL := t.bot.FileDownloadLink(file)
+
+	logger.Debug("downloading file from Telegram",
+		"client", t.name,
+		"file_id", fileID,
+		"file_path", file.FilePath)
 
 	resp, err := http.Get(tempURL)
 	if err != nil {
@@ -292,11 +395,25 @@ func (t *TelegramClient) downloadAndStoreFile(ctx context.Context, fileID string
 
 	contentType := http.DetectContentType(data)
 	key := fmt.Sprintf("telegram/%s/%s-%s", time.Now().Format("2006/01/02"), uuid.New().String(), filepath.Base(file.FilePath))
+
+	logger.Debug("uploading file to object storage",
+		"client", t.name,
+		"file_id", fileID,
+		"content_type", contentType,
+		"size", len(data),
+		"key", key)
+
 	if err := t.objectStorage.Upload(ctx, key, contentType, bytes.NewReader(data)); err != nil {
 		return "", fmt.Errorf("telegram: upload file: %w", err)
 	}
 
-	return fmt.Sprintf("%s/%s", strings.TrimSuffix(t.cdnDomain, "/"), key), nil
+	cdnURL := fmt.Sprintf("%s/%s", strings.TrimSuffix(t.cdnDomain, "/"), key)
+	logger.Debug("file stored successfully",
+		"client", t.name,
+		"file_id", fileID,
+		"cdn_url", cdnURL)
+
+	return cdnURL, nil
 }
 
 // stripEntities processes Telegram entities on a text string.
