@@ -13,7 +13,6 @@ import (
 	"go.orx.me/apps/hyper-sync/internal/media"
 	"go.orx.me/apps/hyper-sync/internal/post"
 	"go.orx.me/apps/hyper-sync/internal/service"
-	"go.orx.me/apps/hyper-sync/internal/social"
 	"go.orx.me/apps/hyper-sync/internal/wire"
 	"go.orx.me/apps/hyper-sync/pkg/proto/api/v1/v1connect"
 )
@@ -42,10 +41,10 @@ func Router(r *gin.Engine) {
 		// Token management routes mutate platform state — same JWT as the RPCs.
 		tokenRoutes := api.Group("/token", auth.GinMiddleware(jwtSecret, userStore))
 		{
-			schedulerService, err := wire.NewSchedulerService()
-			if err != nil {
-				panic(err)
-			}
+		schedulerService, err := wire.GetSchedulerService()
+		if err != nil {
+			panic(err)
+		}
 
 			tokenHandler := handler.NewTokenHandler(schedulerService)
 
@@ -82,11 +81,7 @@ func mountConnectRPC(r *gin.Engine, jwtSecret string, userStore *auth.MongoUserS
 
 	// Build platform deleter from social clients
 	var postOpts []service.PostServiceOption
-	if socialService, err := wire.NewSocialServiceOnly(); err == nil {
-		clients := make(map[string]social.SocialClient)
-		for name, platform := range socialService.GetAllPlatforms() {
-			clients[name] = platform.Client
-		}
+	if clients, err := wire.GetSocialServiceClients(); err == nil {
 		postOpts = append(postOpts, service.WithPlatformDeleter(service.NewSocialPlatformDeleter(clients)))
 	} else {
 		slog.Error("social service unavailable, cascade platform delete disabled", "error", err)
