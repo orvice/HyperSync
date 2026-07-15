@@ -160,6 +160,18 @@ func (s *SyncService) doSync(ctx context.Context) error {
 		maxRetries = conf.Conf.Sync.MaxRetries
 	}
 
+	// Collect posts that are too recent so we can requeue them for
+	// buffer-based clients (e.g. Telegram) where ListPosts is destructive.
+	var delayedPosts []*social.Post
+	if requeuer, ok := mainSocial.Client.(social.PostRequeuer); ok {
+		defer func() {
+			if len(delayedPosts) > 0 {
+				requeuer.Requeue(delayedPosts)
+				logger.Info("requeued delayed posts", "count", len(delayedPosts))
+			}
+		}()
+	}
+
 	for _, post := range posts {
 		contentPreview := preview(post.Content, 50)
 
@@ -198,6 +210,7 @@ func (s *SyncService) doSync(ctx context.Context) error {
 				"sync_delay":       mainSocial.Config.SyncDelay.String(),
 			})
 			postSpan.End()
+			delayedPosts = append(delayedPosts, post)
 			continue
 		}
 

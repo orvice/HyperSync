@@ -362,6 +362,14 @@ type SocialUpdater interface {
 	Update(ctx context.Context, platformID string, post *Post) error
 }
 
+// PostRequeuer is an optional interface for buffer-based clients (e.g.
+// Telegram) where ListPosts is destructive. The sync service calls Requeue
+// to return posts that could not be processed yet (e.g. sync_delay) so
+// they appear again on the next ListPosts call.
+type PostRequeuer interface {
+	Requeue(posts []*Post)
+}
+
 // SocialDeleter is an optional interface for platforms that support deleting posts.
 type SocialDeleter interface {
 	Delete(ctx context.Context, platformID string) error
