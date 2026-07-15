@@ -121,6 +121,19 @@ func NewTelegramClient(botToken, channelID, name, apiBase string, cursor SyncCur
 	return t, nil
 }
 
+// Requeue prepends posts back to the front of the buffer so they will be
+// returned by the next ListPosts call. This is used by the sync service to
+// return posts that were too recent to sync (sync_delay).
+func (t *TelegramClient) Requeue(posts []*Post) {
+	if len(posts) == 0 {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.buffer = append(posts, t.buffer...)
+	t.metrics.SetBufferSize(len(t.buffer))
+}
+
 // Close stops the background polling loop.
 func (t *TelegramClient) Close() {
 	if t.cancel != nil {
