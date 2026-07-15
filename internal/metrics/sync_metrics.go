@@ -1,86 +1,81 @@
 package metrics
 
 import (
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 )
+
+var meter = otel.Meter("hypersync")
+
+// MustInt64Counter panics on error; safe at init time.
+func mustInt64Counter(name, desc string) metric.Int64Counter {
+	c, err := meter.Int64Counter(name, metric.WithDescription(desc))
+	if err != nil {
+		panic(err)
+	}
+	return c
+}
+
+func mustFloat64Histogram(name, desc, unit string) metric.Float64Histogram {
+	h, err := meter.Float64Histogram(name, metric.WithDescription(desc), metric.WithUnit(unit))
+	if err != nil {
+		panic(err)
+	}
+	return h
+}
+
+func mustInt64UpDownCounter(name, desc string) metric.Int64UpDownCounter {
+	c, err := meter.Int64UpDownCounter(name, metric.WithDescription(desc))
+	if err != nil {
+		panic(err)
+	}
+	return c
+}
+
+func mustInt64Gauge(name, desc string) metric.Int64Gauge {
+	g, err := meter.Int64Gauge(name, metric.WithDescription(desc))
+	if err != nil {
+		panic(err)
+	}
+	return g
+}
 
 var (
-	// Posts processed counter
-	SyncPostsProcessedTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "hyper_sync_posts_processed_total",
-			Help: "Total number of posts processed by sync service",
-		},
-		[]string{"main_social", "status"}, // status: processed, skipped_old, exists
+	PostsProcessedTotal = mustInt64Counter(
+		"hyper_sync_posts_processed_total",
+		"Total number of posts processed by sync service",
 	)
-
-	// Cross-platform sync counter
-	SyncCrossPostsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "hyper_sync_cross_posts_total",
-			Help: "Total number of cross-platform post attempts",
-		},
-		[]string{"main_social", "target_platform", "status"}, // status: success, error
+	CrossPostsTotal = mustInt64Counter(
+		"hyper_sync_cross_posts_total",
+		"Total number of cross-platform post attempts",
 	)
-
-	// Sync operation duration
-	SyncOperationDuration = promauto.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "hyper_sync_operation_duration_seconds",
-			Help:    "Duration of sync operations in seconds",
-			Buckets: prometheus.DefBuckets,
-		},
-		[]string{"main_social", "operation"}, // operation: fetch_posts, sync_to_platform, total
+	OperationDuration = mustFloat64Histogram(
+		"hyper_sync_operation_duration_seconds",
+		"Duration of sync operations",
+		"s",
 	)
-
-	// Database operations counter
-	SyncDatabaseOpsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "hyper_sync_database_ops_total",
-			Help: "Total number of database operations in sync service",
-		},
-		[]string{"main_social", "operation", "status"}, // operation: get_post, create_post, update_status
+	DatabaseOpsTotal = mustInt64Counter(
+		"hyper_sync_database_ops_total",
+		"Total number of database operations in sync service",
 	)
-
-	// Currently active sync operations
-	SyncActiveOperations = promauto.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "hyper_sync_active_operations",
-			Help: "Number of currently active sync operations",
-		},
-		[]string{"main_social"},
+	ActiveOperations = mustInt64UpDownCounter(
+		"hyper_sync_active_operations",
+		"Number of currently active sync operations",
 	)
-
-	// Posts in queue gauge
-	SyncPostsInQueue = promauto.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "hyper_sync_posts_in_queue",
-			Help: "Number of posts currently in sync queue",
-		},
-		[]string{"main_social"},
+	PostsInQueue = mustInt64Gauge(
+		"hyper_sync_posts_in_queue",
+		"Number of posts currently in sync queue",
 	)
-
-	// Error rate by platform
-	SyncErrorsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "hyper_sync_errors_total",
-			Help: "Total number of sync errors by type",
-		},
-		[]string{"main_social", "target_platform", "error_type"}, // error_type: platform_error, database_error, network_error
+	ErrorsTotal = mustInt64Counter(
+		"hyper_sync_errors_total",
+		"Total number of sync errors by type",
 	)
-
-	// Retry attempts counter
-	SyncRetriesTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "hyper_sync_retries_total",
-			Help: "Total number of retry attempts",
-		},
-		[]string{"main_social", "target_platform"},
+	RetriesTotal = mustInt64Counter(
+		"hyper_sync_retries_total",
+		"Total number of retry attempts",
 	)
 )
 
-// Labels for different status values
 const (
 	StatusProcessed     = "processed"
 	StatusSkippedOld    = "skipped_old"

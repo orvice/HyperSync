@@ -21,6 +21,7 @@ import (
 	"butterfly.orx.me/core/log"
 
 	"go.orx.me/apps/hyper-sync/internal/media"
+	"go.orx.me/apps/hyper-sync/internal/metrics"
 )
 
 // SyncCursorDao persists polling offsets for pull-based content sources.
@@ -54,6 +55,7 @@ type TelegramClient struct {
 	cursor        SyncCursorDao
 	objectStorage media.ObjectStorage
 	cdnDomain     string
+	metrics       *metrics.TelegramMetrics
 
 	cancel context.CancelFunc
 
@@ -70,6 +72,7 @@ func NewTelegramClient(botToken, channelID, name, apiBase string, cursor SyncCur
 		cursor:        cursor,
 		objectStorage: objectStorage,
 		cdnDomain:     cdnDomain,
+		metrics:       metrics.NewTelegramMetrics(name),
 		pendingGroups: make(map[string]*pendingMediaGroup),
 	}
 
@@ -148,6 +151,8 @@ func (t *TelegramClient) ListPosts(ctx context.Context, limit int) ([]*Post, err
 	posts := t.buffer[:limit]
 	t.buffer = t.buffer[limit:]
 
+	t.metrics.SetBufferSize(len(t.buffer))
+
 	logger.Debug("drained buffered posts",
 		"client", t.name,
 		"returned", len(posts),
@@ -162,6 +167,7 @@ func (t *TelegramClient) handleUpdate(ctx context.Context, _ *tgbot.Bot, update 
 	logger.Debug("received update",
 		"client", t.name,
 		"update_id", update.ID)
+	t.metrics.IncUpdates()
 
 	if msg := update.ChannelPost; msg != nil {
 		logger.Info("received channel post",
@@ -232,6 +238,8 @@ func (t *TelegramClient) ingest(ctx context.Context, msg *models.Message) {
 		return
 	}
 	t.buffer = append(t.buffer, post)
+	t.metrics.IncPostsBuffered()
+	t.metrics.SetBufferSize(len(t.buffer))
 	logger.Info("buffered post",
 		"client", t.name,
 		"post_id", post.ID,
@@ -267,6 +275,8 @@ func (t *TelegramClient) flushGroupLocked(groupID string) {
 	}
 	t.buffer = append(t.buffer, pg.post)
 	delete(t.pendingGroups, groupID)
+	t.metrics.IncPostsBuffered()
+	t.metrics.SetBufferSize(len(t.buffer))
 
 	slog.Default().Info("flushed media group",
 		"client", t.name,
@@ -327,13 +337,16 @@ func (t *TelegramClient) mediaURLs(ctx context.Context, msg *models.Message) []s
 			"client", t.name,
 			"message_id", msg.ID,
 			"file_id", largest.FileID)
+		start := time.Now()
 		if url, err := t.downloadAndStoreFile(ctx, largest.FileID); err == nil {
+			t.metrics.RecordMediaUpload("photo", metrics.StatusSuccess, time.Since(start))
 			logger.Info("photo uploaded to CDN",
 				"client", t.name,
 				"message_id", msg.ID,
 				"url", url)
 			urls = append(urls, url)
 		} else {
+			t.metrics.RecordMediaUpload("photo", metrics.StatusError, time.Since(start))
 			logger.Error("failed to get photo file",
 				"client", t.name,
 				"message_id", msg.ID,
@@ -346,13 +359,16 @@ func (t *TelegramClient) mediaURLs(ctx context.Context, msg *models.Message) []s
 			"client", t.name,
 			"message_id", msg.ID,
 			"file_id", msg.Video.FileID)
+		start := time.Now()
 		if url, err := t.downloadAndStoreFile(ctx, msg.Video.FileID); err == nil {
+			t.metrics.RecordMediaUpload("video", metrics.StatusSuccess, time.Since(start))
 			logger.Info("video uploaded to CDN",
 				"client", t.name,
 				"message_id", msg.ID,
 				"url", url)
 			urls = append(urls, url)
 		} else {
+			t.metrics.RecordMediaUpload("video", metrics.StatusError, time.Since(start))
 			logger.Error("failed to get video file",
 				"client", t.name,
 				"message_id", msg.ID,
