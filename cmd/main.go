@@ -20,7 +20,6 @@ import (
 	"go.orx.me/apps/hyper-sync/internal/media"
 	"go.orx.me/apps/hyper-sync/internal/post"
 	"go.orx.me/apps/hyper-sync/internal/service"
-	"go.orx.me/apps/hyper-sync/internal/social"
 	"go.orx.me/apps/hyper-sync/internal/wire"
 	"go.orx.me/apps/hyper-sync/internal/worker"
 )
@@ -157,7 +156,7 @@ func InitTokenRefresh() error {
 	logger := log.FromContext(context.Background())
 	logger.Info("Initializing token refresh scheduler")
 
-	schedulerService, err := wire.NewSchedulerService()
+	schedulerService, err := wire.GetSchedulerService()
 	if err != nil {
 		logger.Error("Failed to create scheduler service", "error", err)
 		return err
@@ -188,15 +187,10 @@ func InitPublishWorker() error {
 	}
 	mediaStore := media.NewMongoStore(mongoClient, "hypersync")
 
-	socialService, err := wire.NewSocialServiceOnly()
+	clients, err := wire.GetSocialServiceClients()
 	if err != nil {
-		logger.Error("Failed to create social service for publish worker", "error", err)
+		logger.Error("Failed to get social service for publish worker", "error", err)
 		return err
-	}
-
-	clients := make(map[string]social.SocialClient)
-	for name, platform := range socialService.GetAllPlatforms() {
-		clients[name] = platform.Client
 	}
 
 	maxRetries := 3
@@ -226,7 +220,14 @@ func runJob(mainSocial string, socials []string) error {
 	logger := log.FromContext(context.Background())
 	logger.Info("Running job", "main_social", mainSocial, "socials", socials)
 
-	syncService, err := wire.NewSyncService(mainSocial, socials)
+	socialService, err := wire.GetSocialService()
+	if err != nil {
+		return err
+	}
+	mongoClient := dao.NewMongoClient()
+	postDao := dao.NewPostDao(mongoClient)
+	locker := dao.NewLocker(dao.NewRedisClient())
+	syncService, err := service.NewSyncService(postDao, socialService, locker, mainSocial, socials)
 	if err != nil {
 		return err
 	}
